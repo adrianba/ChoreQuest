@@ -57,12 +57,15 @@ async def create_vacation(
     if body.end_date < date.today():
         raise HTTPException(status_code=400, detail="Cannot create vacation in the past")
 
-    # Validate kid belongs to this family when per-kid is requested
+    # Validate kid belongs to this family when per-kid is requested.
+    # Keep the kid object so we can populate kid_name without a second query.
+    kid: User | None = None
     if body.user_id is not None:
-        kr = await db.execute(
+        kid_result = await db.execute(
             select(User).where(User.id == body.user_id, User.role == UserRole.kid)
         )
-        if kr.scalar_one_or_none() is None:
+        kid = kid_result.scalar_one_or_none()
+        if kid is None:
             raise HTTPException(status_code=404, detail="Kid not found")
 
     vacation = VacationPeriod(
@@ -76,8 +79,8 @@ async def create_vacation(
     await db.refresh(vacation)
 
     resp = VacationResponse.model_validate(vacation)
-    if vacation.user_id and vacation.kid:
-        resp.kid_name = vacation.kid.display_name or vacation.kid.username
+    if vacation.user_id is not None and kid is not None:
+        resp.kid_name = kid.display_name or kid.username
     return resp
 
 
