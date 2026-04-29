@@ -30,6 +30,7 @@ import {
   RotateCw,
   Search,
   X,
+  ShieldAlert,
 } from 'lucide-react';
 
 const DIFFICULTY_OPTIONS = [
@@ -539,6 +540,12 @@ export default function Chores() {
                     <span className="flex items-center gap-1 text-muted text-xs">
                       <Camera size={11} />
                       Photo
+                    </span>
+                  )}
+                  {chore.is_critical && (
+                    <span className="flex items-center gap-1 text-orange-400 text-xs font-medium">
+                      <ShieldAlert size={11} />
+                      Critical
                     </span>
                   )}
                   {isParent && assignCount > 0 && (

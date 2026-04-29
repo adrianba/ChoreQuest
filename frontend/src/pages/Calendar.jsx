@@ -18,6 +18,7 @@ import {
   Loader2,
   X,
   Trash2,
+  ShieldAlert,
 } from 'lucide-react';
 
 function toISO(date) {
@@ -35,6 +36,13 @@ const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function statusStyle(assignment, dayStr) {
   const today = todayLocalISO();
 
+  if (assignment.status === 'open') {
+    return {
+      border: 'border-orange-400/60',
+      bg: 'bg-orange-400/5',
+      icon: <ShieldAlert size={16} className="text-orange-400" />,
+    };
+  }
   if (assignment.status === 'verified') {
     return {
       border: 'border-emerald',
@@ -361,8 +369,13 @@ export default function Calendar() {
                             >
                               {themedTitle(a.chore?.title || a.chore_title || 'Quest', colorTheme)}
                             </p>
+                            {a.status === 'open' && (
+                              <p className="text-[10px] text-orange-400 font-semibold mt-0.5">
+                                Needs coverage
+                              </p>
+                            )}
                             {/* Show assigned kid for parents */}
-                            {!isKid && (a.user?.display_name || a.assigned_to_name) && (
+                            {!isKid && a.status !== 'open' && (a.user?.display_name || a.assigned_to_name) && (
                               <p className="text-xs text-purple font-medium mt-0.5 truncate">
                                 {a.user?.display_name || a.assigned_to_name}
                               </p>

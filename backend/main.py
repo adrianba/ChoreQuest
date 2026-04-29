@@ -10,13 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import delete, select
+from sqlalchemy.orm import selectinload
 
 from backend.config import settings
 from backend.database import init_db, async_session
 from backend.seed import seed_database
 from backend.auth import decode_access_token
 from backend.websocket_manager import ws_manager
-from backend.models import RefreshToken, User, UserRole
+from backend.models import RefreshToken, User, UserRole, ChoreAssignment, AssignmentStatus, Notification, NotificationType
 from backend.services.assignment_generator import generate_daily_assignments, expire_stale_assignments
 from backend.routers.bounty import expire_stale_bounty_claims
 from backend.services.push_hook import install_push_hooks
@@ -76,6 +77,51 @@ async def reset_stale_streaks(db, today: date):
             kid.current_streak = 0
 
 
+async def _alert_uncovered_critical_chores(db, today: date):
+    """Send push notifications to parents for any critical chores that were
+    still open (unclaimed) as of yesterday — i.e., nobody did them.
+    """
+    yesterday = today - timedelta(days=1)
+    result = await db.execute(
+        select(ChoreAssignment)
+        .join(ChoreAssignment.chore)
+        .where(
+            ChoreAssignment.status == AssignmentStatus.open,
+            ChoreAssignment.user_id.is_(None),
+            ChoreAssignment.date == yesterday,
+        )
+        .options(selectinload(ChoreAssignment.chore))
+    )
+    uncovered = result.scalars().all()
+    if not uncovered:
+        return
+
+    from backend.models import Chore
+    parent_result = await db.execute(
+        select(User).where(
+            User.role.in_([UserRole.parent, UserRole.admin]),
+            User.is_active == True,
+        )
+    )
+    parents = parent_result.scalars().all()
+
+    titles = ", ".join(a.chore.title for a in uncovered if a.chore)
+    count = len(uncovered)
+    msg = (
+        f"{count} critical chore{'s' if count > 1 else ''} "
+        f"went uncovered yesterday: {titles}"
+    )
+    for parent in parents:
+        db.add(Notification(
+            user_id=parent.id,
+            type=NotificationType.chore_assigned,
+            title="⚠️ Critical Chores Were Uncovered",
+            message=msg,
+            reference_type="open_pool",
+        ))
+    logger.warning("Uncovered critical chores from %s: %s", yesterday, titles)
+
+
 async def daily_reset_task():
     """Background task that runs once per day at the configured hour.
 
@@ -97,6 +143,11 @@ async def daily_reset_task():
                 today = date.today()
 
                 await expire_stale_assignments(db, today)
+
+                # Alert parents about open-pool assignments that were never claimed
+                # (critical chores from yesterday that nobody took care of).
+                await _alert_uncovered_critical_chores(db, today)
+
                 await generate_daily_assignments(db, today)
 
                 # Reset verified bounty claims so kids can re-claim daily bounties

@@ -34,6 +34,7 @@ class AssignmentStatus(str, enum.Enum):
     completed = "completed"
     verified = "verified"
     skipped = "skipped"
+    open = "open"  # Critical chore unclaimed — awaiting any family member
 
 
 class RedemptionStatus(str, enum.Enum):
@@ -172,6 +173,7 @@ class Chore(Base):
     requires_photo: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_bounty: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_critical: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -183,10 +185,16 @@ class Chore(Base):
 
 class ChoreAssignment(Base):
     __tablename__ = "chore_assignments"
+    # user_id is NULL for open-pool (unclaimed critical) assignments.
+    # The unique constraint covers (chore_id, date) for open-pool rows and
+    # (chore_id, user_id, date) for normal rows — SQLite treats NULLs as
+    # distinct in unique indexes, so we rely on the application-level
+    # _create_open_pool_if_missing guard instead of a DB unique constraint
+    # for the NULL case.
     __table_args__ = (UniqueConstraint("chore_id", "user_id", "date"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     chore_id: Mapped[int] = mapped_column(ForeignKey("chores.id"), nullable=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     date: Mapped[date] = mapped_column(Date, nullable=False)
     status: Mapped[AssignmentStatus] = mapped_column(Enum(AssignmentStatus), default=AssignmentStatus.pending)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

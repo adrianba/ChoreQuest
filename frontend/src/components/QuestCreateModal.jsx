@@ -8,6 +8,7 @@ import {
   Star,
   Scroll,
   CheckCircle2,
+  ShieldAlert,
 } from 'lucide-react';
 
 const DIFFICULTY_OPTIONS = [
@@ -27,6 +28,7 @@ const emptyForm = {
   points: 10,
   difficulty: 'easy',
   category_id: '',
+  is_critical: false,
 };
 
 export default function QuestCreateModal({
@@ -53,6 +55,7 @@ export default function QuestCreateModal({
           points: editingChore.points || 10,
           difficulty: editingChore.difficulty || 'easy',
           category_id: editingChore.category_id ? String(editingChore.category_id) : '',
+          is_critical: editingChore.is_critical || false,
         });
       } else {
         setForm({ ...emptyForm });
@@ -123,6 +126,7 @@ export default function QuestCreateModal({
       // New quests from this flow don't set recurrence/photo on the chore itself
       recurrence: 'once',
       requires_photo: false,
+      is_critical: form.is_critical,
       assigned_user_ids: [],
     };
 
@@ -319,6 +323,41 @@ export default function QuestCreateModal({
             ))}
           </select>
         </div>
+
+        {/* Critical toggle */}
+        <button
+          type="button"
+          onClick={() => updateForm('is_critical', !form.is_critical)}
+          className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors text-left ${
+            form.is_critical
+              ? 'border-orange-400/60 bg-orange-400/10'
+              : 'border-border bg-surface-raised/30 hover:border-border/80'
+          }`}
+        >
+          <ShieldAlert
+            size={18}
+            className={form.is_critical ? 'text-orange-400 flex-shrink-0' : 'text-muted flex-shrink-0'}
+          />
+          <div className="flex-1 min-w-0">
+            <p className={`text-sm font-medium ${form.is_critical ? 'text-orange-300' : 'text-cream'}`}>
+              Critical — must be covered during vacations
+            </p>
+            <p className="text-xs text-muted mt-0.5">
+              When the assigned kid is away, this chore enters the open pool for the whole family.
+            </p>
+          </div>
+          <div
+            className={`w-9 h-5 rounded-full flex-shrink-0 relative transition-colors ${
+              form.is_critical ? 'bg-orange-400' : 'bg-surface-raised border border-border'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+                form.is_critical ? 'translate-x-4' : 'translate-x-0.5'
+              }`}
+            />
+          </div>
+        </button>
       </div>
     </Modal>
   );

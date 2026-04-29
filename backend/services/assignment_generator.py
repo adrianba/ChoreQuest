@@ -18,6 +18,10 @@ from backend.models import (
     ChoreRotation,
     AssignmentStatus,
     Recurrence,
+    Notification,
+    NotificationType,
+    User,
+    UserRole,
 )
 from backend.services.recurrence import should_create_on_day
 from backend.services.rotation import (
@@ -140,6 +144,7 @@ async def generate_daily_assignments(db: AsyncSession, today: date) -> None:
             if rotation and active_rules and should_advance_rotation(rotation, now):
                 await advance_rotation_and_mirror(rotation, db, now)
 
+            covered = False  # tracks whether any non-vacation kid got an assignment
             for rule in active_rules:
                 # Rotation filtering: only generate for the current rotation kid
                 if rotation and int(rule.user_id) != int(
@@ -153,9 +158,13 @@ async def generate_daily_assignments(db: AsyncSession, today: date) -> None:
                         "Skipping assignment for kid %d — personal vacation %s",
                         rule.user_id, today,
                     )
+                    # Critical chore: enter open pool if not already covered
+                    if chore.is_critical and not covered:
+                        await _create_open_pool_if_missing(db, chore, today)
                     continue
 
                 await _create_if_missing(db, chore.id, rule.user_id, today)
+                covered = True
         else:
             # Legacy: chore-level recurrence
             if chore.recurrence == Recurrence.once:
@@ -175,6 +184,7 @@ async def generate_daily_assignments(db: AsyncSession, today: date) -> None:
             else:
                 user_ids = await _get_legacy_user_ids(db, chore.id)
 
+            covered = False
             for uid in user_ids:
                 # Skip if this kid is individually on vacation today
                 if await is_vacation_day(db, today, user_id=int(uid)):
@@ -182,8 +192,12 @@ async def generate_daily_assignments(db: AsyncSession, today: date) -> None:
                         "Skipping assignment for kid %d — personal vacation %s",
                         uid, today,
                     )
+                    # Critical chore: enter open pool if not already covered
+                    if chore.is_critical and not covered:
+                        await _create_open_pool_if_missing(db, chore, today)
                     continue
                 await _create_if_missing(db, chore.id, uid, today)
+                covered = True
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +308,73 @@ async def _create_if_missing(
     return False
 
 
+async def _create_open_pool_if_missing(
+    db: AsyncSession, chore: "Chore", day: date
+) -> bool:
+    """Create an open-pool assignment for a critical chore if none exists yet.
+
+    An open-pool assignment has user_id=NULL and status='open'.  We skip
+    creation when any non-open assignment already exists for that chore+date
+    (meaning another kid already has or completed the chore that day).
+
+    Returns True if a new open-pool assignment was created.
+    """
+    from sqlalchemy import select as _select
+
+    # Check whether any regular (owned) assignment already exists for this chore+day
+    any_owned = await db.execute(
+        _select(ChoreAssignment).where(
+            ChoreAssignment.chore_id == chore.id,
+            ChoreAssignment.date == day,
+            ChoreAssignment.user_id.isnot(None),
+        )
+    )
+    if any_owned.scalar_one_or_none() is not None:
+        return False
+
+    # Check whether an open-pool assignment already exists
+    open_existing = await db.execute(
+        _select(ChoreAssignment).where(
+            ChoreAssignment.chore_id == chore.id,
+            ChoreAssignment.date == day,
+            ChoreAssignment.user_id.is_(None),
+            ChoreAssignment.status == AssignmentStatus.open,
+        )
+    )
+    if open_existing.scalar_one_or_none() is not None:
+        return False
+
+    db.add(
+        ChoreAssignment(
+            chore_id=chore.id,
+            user_id=None,
+            date=day,
+            status=AssignmentStatus.open,
+        )
+    )
+    logger.info(
+        "Created open-pool assignment: chore=%d (%s) day=%s",
+        chore.id, chore.title, day,
+    )
+
+    # Notify parents and all active kids so everyone knows coverage is needed.
+    # push_hook will fire Web Push via the Notification flush listener.
+    msg = f"Critical chore needs coverage on {day.isoformat()}: {chore.title}"
+    recipients = await db.execute(
+        _select(User).where(User.is_active == True)
+    )
+    for recipient in recipients.scalars().all():
+        db.add(Notification(
+            user_id=recipient.id,
+            type=NotificationType.chore_assigned,
+            title="🚨 Critical Chore Needs Coverage",
+            message=msg,
+            reference_type="open_pool",
+        ))
+
+    return True
+
+
 async def _generate_from_rules(
     db: AsyncSession,
     chore: Chore,
@@ -344,6 +425,9 @@ async def _generate_from_rules(
             # Skip if this kid is on a personal vacation for this specific day
             from backend.routers.vacation import is_vacation_day
             if await is_vacation_day(db, day, user_id=int(rule.user_id)):
+                # Critical chore: enter open pool if not already covered
+                if chore.is_critical:
+                    await _create_open_pool_if_missing(db, chore, day)
                 continue
 
             await _create_if_missing(db, chore.id, rule.user_id, day)
@@ -410,5 +494,8 @@ async def _generate_legacy(
                 continue
             from backend.routers.vacation import is_vacation_day
             if await is_vacation_day(db, day, user_id=int(user_id)):
+                # Critical chore: enter open pool if not already covered
+                if chore.is_critical:
+                    await _create_open_pool_if_missing(db, chore, day)
                 continue
             await _create_if_missing(db, chore.id, user_id, day)

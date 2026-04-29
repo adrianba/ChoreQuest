@@ -87,6 +87,8 @@ export default function KidDashboard() {
   // data state
   const [assignments, setAssignments] = useState([]);
   const [overdueAssignments, setOverdueAssignments] = useState([]);
+  const [openPool, setOpenPool] = useState([]);
+  const [claimingId, setClaimingId] = useState(null);
   const [chores, setChores] = useState([]);
   const [spinAvailability, setSpinAvailability] = useState(null);
   const [myStats, setMyStats] = useState(null);
@@ -196,6 +198,14 @@ export default function KidDashboard() {
       }
 
       setSpinAvailability(spinRes);
+
+      // Fetch open-pool (critical chores needing coverage)
+      try {
+        const openPoolRes = await api('/api/chores/open-pool');
+        setOpenPool(Array.isArray(openPoolRes) ? openPoolRes : []);
+      } catch {
+        setOpenPool([]);
+      }
     } catch (err) {
       showToast(err.message || 'Failed to load quest data', 'error');
     } finally {
@@ -264,6 +274,23 @@ export default function KidDashboard() {
     } finally {
       completeInFlight.current = false;
       setCompletingToday(null);
+    }
+  };
+
+  // ---- claim open-pool assignment ----
+
+  const handleClaimOpenPool = async (assignmentId) => {
+    if (claimingId) return;
+    setClaimingId(assignmentId);
+    try {
+      await api(`/api/chores/assignments/${assignmentId}/claim`, { method: 'POST' });
+      setShowConfetti(true);
+      showToast('You claimed the quest! Complete it to earn XP! 🏆', 'success');
+      await fetchData();
+    } catch (err) {
+      showToast(err.message || 'Could not claim quest', 'error');
+    } finally {
+      setClaimingId(null);
     }
   };
 
@@ -396,6 +423,60 @@ export default function KidDashboard() {
         </div>
       )}
 
+
+      {/* ── Needs Coverage — open-pool critical chores ── */}
+      {openPool.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-orange-400 text-xs font-semibold px-1 flex items-center gap-1">
+            <ShieldOff size={12} />
+            Critical Quests Need Coverage — earn XP by helping out!
+          </p>
+          {openPool.map((a) => {
+            const isClaiming = claimingId === a.id;
+            const today = todayISO();
+            const isToday = a.date === today;
+            return (
+              <motion.div
+                key={a.id}
+                className="game-panel p-4 border-orange-400/30 bg-orange-400/5"
+                variants={cardVariants}
+                initial="hidden"
+                animate="visible"
+                custom={0}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-cream text-sm font-semibold truncate">
+                      {a.chore?.title || 'Critical Chore'}
+                    </h3>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      <span className="inline-flex items-center gap-1 text-gold text-xs font-semibold">
+                        <Star size={11} fill="currentColor" />
+                        {a.chore?.points} XP
+                      </span>
+                      <span className={`text-xs font-medium ${isToday ? 'text-orange-400' : 'text-muted'}`}>
+                        {isToday ? 'Today' : a.date}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    className="game-btn game-btn-gold flex items-center gap-1.5 !text-xs flex-shrink-0"
+                    disabled={!!claimingId}
+                    onClick={() => handleClaimOpenPool(a.id)}
+                  >
+                    {isClaiming ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <HandHeart size={12} />
+                    )}
+                    Take It
+                  </button>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── Overdue quests (grace period) ── */}
       {overdueAssignments.length > 0 && (

@@ -88,6 +88,7 @@ class ChoreCreate(BaseModel):
     custom_days: list[int] | None = None
     requires_photo: bool = False
     is_bounty: bool = False
+    is_critical: bool = False
     assigned_user_ids: list[int] = []
 
 
@@ -102,6 +103,7 @@ class ChoreUpdate(BaseModel):
     custom_days: list[int] | None = None
     requires_photo: bool | None = None
     is_bounty: bool | None = None
+    is_critical: bool | None = None
     assigned_user_ids: list[int] | None = None
 
 
@@ -129,6 +131,7 @@ class ChoreResponse(BaseModel):
     requires_photo: bool
     is_active: bool
     is_bounty: bool = False
+    is_critical: bool = False
     created_by: int
     created_at: datetime
     rotation_summary: RotationSummary | None = None
@@ -144,7 +147,7 @@ class ChoreResponse(BaseModel):
 class AssignmentResponse(BaseModel):
     id: int
     chore_id: int
-    user_id: int
+    user_id: int | None  # None for open-pool (unclaimed critical) assignments
     date: date
     status: AssignmentStatus
     completed_at: datetime | None

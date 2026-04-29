@@ -35,6 +35,7 @@ _NOTIFICATION_URL_MAP = {
     "reward_denied": "/rewards",
     "announcement": "/party",
     "quest_feedback": "/",
+    "open_pool": "/",
 }
 
 

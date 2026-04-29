@@ -63,6 +63,7 @@ router = APIRouter(prefix="/api/chores", tags=["chores"])
 
 _CHORE_CHANGED = {"type": "data_changed", "data": {"entity": "chore"}}
 _CATEGORY_CHANGED = {"type": "data_changed", "data": {"entity": "category"}}
+_CRITICAL_UNCOVERED = {"type": "data_changed", "data": {"entity": "critical_chore_uncovered"}}
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +262,7 @@ async def create_chore(
         custom_days=body.custom_days,
         requires_photo=body.requires_photo,
         is_bounty=body.is_bounty,
+        is_critical=body.is_critical,
         created_by=user.id,
     )
     db.add(chore)
@@ -1307,6 +1309,166 @@ async def skip_chore(
     await db.commit()
 
     await ws_manager.broadcast(_CHORE_CHANGED, exclude_user=user.id)
+
+    assignment = await _reload_assignment_with_relations(db, assignment.id)
+    return AssignmentResponse.model_validate(assignment)
+
+
+@router.post("/assignments/{assignment_id}/complete-no-xp", response_model=AssignmentResponse)
+async def parent_complete_no_xp(
+    assignment_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_parent),
+):
+    """Parent marks an open-pool assignment as done without awarding XP.
+
+    Used when a parent personally completes a critical chore during a kid's
+    vacation.  The assignment is transitioned directly to 'verified' with no
+    XP or streak awarded to anyone.
+    """
+    now = datetime.now(timezone.utc)
+
+    result = await db.execute(
+        select(ChoreAssignment)
+        .where(ChoreAssignment.id == assignment_id)
+        .options(selectinload(ChoreAssignment.chore))
+    )
+    assignment = result.scalar_one_or_none()
+    if assignment is None:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    if assignment.status not in (AssignmentStatus.open, AssignmentStatus.pending):
+        raise HTTPException(
+            status_code=400,
+            detail="Assignment is not in an open or pending state",
+        )
+
+    assignment.user_id = user.id
+    assignment.status = AssignmentStatus.verified
+    assignment.completed_at = now
+    assignment.verified_at = now
+    assignment.verified_by = user.id
+    assignment.updated_at = now
+    await db.commit()
+
+    await ws_manager.broadcast(
+        {"type": "data_changed", "data": {"entity": "open_pool_completed", "assignment_id": assignment_id}},
+        exclude_user=user.id,
+    )
+
+    assignment = await _reload_assignment_with_relations(db, assignment.id)
+    return AssignmentResponse.model_validate(assignment)
+
+
+# ---------------------------------------------------------------------------
+# Open-Pool (critical chore coverage)
+# ---------------------------------------------------------------------------
+
+@router.get("/open-pool")
+async def list_open_pool(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return open-pool assignments for today and the next 7 days.
+
+    These are critical chores with no assigned kid (user_id IS NULL, status='open').
+    Accessible to all authenticated family members so everyone can see what
+    needs coverage.
+    """
+    today = date.today()
+    horizon = today + timedelta(days=7)
+    result = await db.execute(
+        select(ChoreAssignment)
+        .where(
+            ChoreAssignment.status == AssignmentStatus.open,
+            ChoreAssignment.user_id.is_(None),
+            ChoreAssignment.date >= today,
+            ChoreAssignment.date <= horizon,
+        )
+        .options(
+            selectinload(ChoreAssignment.chore).selectinload(Chore.category),
+        )
+        .order_by(ChoreAssignment.date)
+    )
+    assignments = result.scalars().all()
+    return [
+        {
+            "id": a.id,
+            "chore_id": a.chore_id,
+            "date": a.date.isoformat(),
+            "status": a.status.value,
+            "chore": {
+                "id": a.chore.id,
+                "title": a.chore.title,
+                "points": a.chore.points,
+                "icon": a.chore.icon,
+                "difficulty": a.chore.difficulty.value if a.chore.difficulty else None,
+                "is_critical": a.chore.is_critical,
+                "category": (
+                    {
+                        "id": a.chore.category.id,
+                        "name": a.chore.category.name,
+                        "icon": a.chore.category.icon,
+                        "colour": a.chore.category.colour,
+                    }
+                    if a.chore.category else None
+                ),
+            } if a.chore else None,
+        }
+        for a in assignments
+    ]
+
+
+@router.post("/assignments/{assignment_id}/claim", response_model=AssignmentResponse)
+async def claim_open_pool_assignment(
+    assignment_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Claim an open-pool critical chore assignment.
+
+    Any non-vacationing kid or parent/admin can claim it.  Claiming
+    transitions the assignment from status='open' (ownerless) to
+    status='pending' and assigns it to the claimant.
+    """
+    from backend.routers.vacation import is_vacation_day
+
+    result = await db.execute(
+        select(ChoreAssignment)
+        .where(
+            ChoreAssignment.id == assignment_id,
+            ChoreAssignment.status == AssignmentStatus.open,
+            ChoreAssignment.user_id.is_(None),
+        )
+        .options(
+            selectinload(ChoreAssignment.chore).selectinload(Chore.category),
+        )
+    )
+    assignment = result.scalar_one_or_none()
+    if assignment is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Open-pool assignment not found or already claimed",
+        )
+
+    # Kids cannot claim while on vacation (parents/admins always can)
+    if user.role == UserRole.kid:
+        if await is_vacation_day(db, assignment.date, user_id=user.id):
+            raise HTTPException(
+                status_code=400,
+                detail="You cannot claim a chore for a day you are on vacation",
+            )
+
+    now = datetime.now(timezone.utc)
+    assignment.user_id = user.id
+    assignment.status = AssignmentStatus.pending
+    assignment.updated_at = now
+    await db.commit()
+
+    await ws_manager.broadcast(
+        {"type": "data_changed", "data": {"entity": "open_pool_claimed", "assignment_id": assignment_id}},
+        exclude_user=user.id,
+    )
 
     assignment = await _reload_assignment_with_relations(db, assignment.id)
     return AssignmentResponse.model_validate(assignment)

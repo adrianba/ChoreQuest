@@ -15,6 +15,8 @@ import {
   MessageSquare,
   Send,
   CalendarDays,
+  ShieldAlert,
+  HandHeart,
 } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 import { themedTitle } from '../utils/questThemeText';
@@ -42,6 +44,7 @@ export default function ParentDashboard() {
 
   const [familyStats, setFamilyStats] = useState([]);
   const [pendingVerifications, setPendingVerifications] = useState([]);
+  const [openPool, setOpenPool] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -61,12 +64,14 @@ export default function ParentDashboard() {
     try {
       setError(null);
 
-      const [familyRes, calendarRes] = await Promise.all([
+      const [familyRes, calendarRes, openPoolRes] = await Promise.all([
         api('/api/stats/family'),
         api('/api/calendar'),
+        api('/api/chores/open-pool').catch(() => []),
       ]);
 
       setFamilyStats(familyRes);
+      setOpenPool(Array.isArray(openPoolRes) ? openPoolRes : []);
 
       // Collect completed assignments from ALL days (grace-period submissions
       // from previous days appear here too, not just today's).
@@ -171,6 +176,19 @@ export default function ParentDashboard() {
     }
   };
 
+  const handleMarkDoneNoXP = async (assignmentId) => {
+    const key = `no-xp-${assignmentId}`;
+    setActionBusy(key, true);
+    try {
+      await api(`/api/chores/assignments/${assignmentId}/complete-no-xp`, { method: 'POST' });
+      await fetchData();
+    } catch (err) {
+      setError(err.message || 'Failed to mark chore done');
+    } finally {
+      setActionBusy(key, false);
+    }
+  };
+
   function ProgressBar({ completed, total }) {
     const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
     return (
@@ -270,6 +288,57 @@ export default function ParentDashboard() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Needs Coverage — open-pool critical chores */}
+      {openPool.length > 0 && (
+        <section>
+          <h2 className="flex items-center gap-2 text-orange-400 text-sm font-semibold mb-2">
+            <ShieldAlert size={15} />
+            Needs Coverage ({openPool.length})
+          </h2>
+          <div className="space-y-2">
+            {openPool.map((a) => {
+              const key = `no-xp-${a.id}`;
+              const isBusy = !!actionLoading[key];
+              const today = todayLocalISO();
+              const isToday = a.date === today;
+              return (
+                <div key={a.id} className="game-panel p-3 border-orange-400/30 bg-orange-400/5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-cream text-sm font-medium truncate">
+                        {a.chore?.title || 'Critical Chore'}
+                      </p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className={`flex items-center gap-1 text-xs font-medium ${isToday ? 'text-orange-400' : 'text-muted'}`}>
+                          <CalendarDays size={10} />
+                          {isToday ? 'Today' : a.date}
+                        </span>
+                        <span className="text-gold text-xs font-medium">
+                          +{a.chore?.points} XP on offer
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      className="game-btn game-btn-blue flex items-center gap-1.5 !text-xs flex-shrink-0"
+                      disabled={isBusy}
+                      onClick={() => handleMarkDoneNoXP(a.id)}
+                      title="Mark as done by parent (no XP)"
+                    >
+                      {isBusy ? (
+                        <Loader2 size={12} className="animate-spin" />
+                      ) : (
+                        <HandHeart size={12} />
+                      )}
+                      Mark Done
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
 
       {/* Pending Verifications */}
