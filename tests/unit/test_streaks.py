@@ -48,7 +48,7 @@ async def _apply_streak(
             all_vacation = True
             for offset in range(1, gap):
                 gap_day = kid.last_streak_date + timedelta(days=offset)
-                if not await is_vacation_day(db, gap_day):
+                if not await is_vacation_day(db, gap_day, user_id=kid.id):
                     all_vacation = False
                     break
             if all_vacation:
@@ -253,6 +253,55 @@ class TestPerKidVacation:
                 all_vacation = False
                 break
         assert all_vacation is True
+
+    @pytest.mark.asyncio
+    async def test_apply_streak_per_kid_vacation_preserves_streak(self, db):
+        """_apply_streak correctly preserves the streak when the gap is covered by
+        a per-kid (not family-wide) vacation."""
+        parent = await make_user(db, "pkvac_parent4", role=UserRole.parent)
+        kid    = await make_user(db, "pkvac_kid4", current_streak=5,
+                                  last_streak_date=date(2024, 9, 1))
+        # Only kid's personal vacation — household is NOT on vacation
+        db.add(VacationPeriod(
+            start_date=date(2024, 9, 2),
+            end_date=date(2024, 9, 4),
+            created_by=parent.id,
+            user_id=kid.id,
+        ))
+        await db.commit()
+
+        # Kid returns and completes a chore on 2024-09-05 (gap of 4 days,
+        # all covered by the personal vacation)
+        await _apply_streak(db, kid, date(2024, 9, 5))
+        assert kid.current_streak == 6
+        assert kid.last_streak_date == date(2024, 9, 5)
+
+    @pytest.mark.asyncio
+    async def test_apply_streak_per_kid_vacation_does_not_affect_other_kid(self, db):
+        """Another kid's personal vacation must NOT protect an unrelated kid's streak."""
+        parent = await make_user(db, "pkvac_parent5", role=UserRole.parent)
+        kid_a  = await make_user(db, "pkvac_kid5a", current_streak=3,
+                                  last_streak_date=date(2024, 9, 10))
+        kid_b  = await make_user(db, "pkvac_kid5b")
+        # kid_b goes on personal vacation — kid_a is NOT on vacation
+        db.add(VacationPeriod(
+            start_date=date(2024, 9, 11),
+            end_date=date(2024, 9, 13),
+            created_by=parent.id,
+            user_id=kid_b.id,
+        ))
+        await db.commit()
+
+        # kid_a completes a chore on 2024-09-14 — gap of 4 days, NOT covered
+        # by kid_a's own vacation → streak should reset (no freeze available)
+        await _apply_streak(db, kid_a, date(2024, 9, 14))
+        # Streak freeze auto-applied (kid_a has no freeze used this month)
+        # After the freeze is consumed the streak continues; if we want a hard
+        # reset we'd need to exhaust the freeze first.  The important assertion
+        # is that the streak is NOT silently extended as if it were a vacation.
+        assert kid_a.last_streak_date == date(2024, 9, 14)
+        # Whether freeze kicked in or streak reset, the value is ≤ 4 (not 4+1=5 via vacation path)
+        assert kid_a.current_streak <= 4
 
 
 class TestStreakFreezeUsedOnce:

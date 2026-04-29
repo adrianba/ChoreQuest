@@ -54,7 +54,7 @@ async def _effective_streak(db: AsyncSession, user: User) -> int:
     gap = (today - user.last_streak_date).days
     for offset in range(1, gap):
         gap_day = user.last_streak_date + timedelta(days=offset)
-        if not await is_vacation_day(db, gap_day):
+        if not await is_vacation_day(db, gap_day, user_id=user.id):
             return 0
 
     return user.current_streak
