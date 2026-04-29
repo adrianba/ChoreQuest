@@ -100,7 +100,7 @@ async def _alert_uncovered_critical_chores(db, today: date):
     parent_result = await db.execute(
         select(User).where(
             User.role.in_([UserRole.parent, UserRole.admin]),
-            User.is_active == True,
+            User.is_active,
         )
     )
     parents = parent_result.scalars().all()

@@ -428,7 +428,7 @@ export default function KidDashboard() {
       {openPool.length > 0 && (
         <div className="space-y-2">
           <p className="text-orange-400 text-xs font-semibold px-1 flex items-center gap-1">
-            <ShieldOff size={12} />
+            <ShieldAlert size={12} />
             Critical Quests Need Coverage — earn XP by helping out!
           </p>
           {openPool.map((a) => {

@@ -361,7 +361,7 @@ async def _create_open_pool_if_missing(
     # push_hook will fire Web Push via the Notification flush listener.
     msg = f"Critical chore needs coverage on {day.isoformat()}: {chore.title}"
     recipients = await db.execute(
-        _select(User).where(User.is_active == True)
+        _select(User).where(User.is_active)
     )
     for recipient in recipients.scalars().all():
         db.add(Notification(
