@@ -1106,7 +1106,7 @@ async def verify_chore(
             else:
                 # Streak freeze: auto-use if available (1 per calendar month)
                 current_month = today.month + today.year * 12
-                freeze_month  = kid.streak_freeze_month or 0
+                freeze_month = kid.streak_freeze_month or 0
                 if kid.current_streak > 0 and freeze_month != current_month:
                     # Use the freeze — preserve streak
                     kid.streak_freezes_used = (kid.streak_freezes_used or 0) + 1
