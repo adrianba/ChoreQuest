@@ -1,11 +1,11 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.models import User, UserRole, VacationPeriod
+from backend.models import ChoreAssignment, AssignmentStatus, User, UserRole, VacationPeriod
 from backend.schemas import VacationCreate, VacationResponse
 from backend.dependencies import require_parent
 
@@ -77,6 +77,21 @@ async def create_vacation(
     db.add(vacation)
     await db.commit()
     await db.refresh(vacation)
+
+    # Auto-skip any pending assignments that fall within the vacation window
+    # so the kid's dashboard is immediately clean.
+    skip_filters = [
+        ChoreAssignment.date >= body.start_date,
+        ChoreAssignment.date <= body.end_date,
+        ChoreAssignment.status == AssignmentStatus.pending,
+    ]
+    if body.user_id is not None:
+        # Per-kid vacation — only skip that kid's assignments
+        skip_filters.append(ChoreAssignment.user_id == body.user_id)
+    # Family-wide vacation — skip all pending assignments within the window
+    # (no user filter needed)
+    await db.execute(update(ChoreAssignment).where(*skip_filters).values(status=AssignmentStatus.skipped))
+    await db.commit()
 
     resp = VacationResponse.model_validate(vacation)
     if vacation.user_id is not None and kid is not None:
