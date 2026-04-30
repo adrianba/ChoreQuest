@@ -1190,6 +1190,193 @@ async def verify_chore(
     return AssignmentResponse.model_validate(assignment)
 
 
+@router.post("/assignments/{assignment_id}/parent-verify", response_model=AssignmentResponse)
+async def parent_verify_assignment(
+    assignment_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_parent),
+):
+    """Parent marks a pending assignment as verified directly, skipping kid submission.
+
+    Useful when a kid completed the chore but forgot to submit, or for younger
+    kids who need a parent to log it for them.  Awards points and updates streak
+    exactly as the normal verify flow does.
+    """
+    today = date.today()
+    now = datetime.now(timezone.utc)
+
+    result = await db.execute(
+        select(ChoreAssignment)
+        .where(ChoreAssignment.id == assignment_id)
+        .options(selectinload(ChoreAssignment.chore))
+    )
+    assignment = result.scalar_one_or_none()
+    if assignment is None:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    if assignment.status != AssignmentStatus.pending:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Assignment is {assignment.status.value}, not pending",
+        )
+
+    chore = assignment.chore
+    base_points = chore.points
+
+    assignment.status = AssignmentStatus.verified
+    assignment.completed_at = now
+    assignment.verified_at = now
+    assignment.verified_by = user.id
+    assignment.updated_at = now
+
+    # Event multiplier
+    now_naive = now.replace(tzinfo=None)
+    ev_result = await db.execute(
+        select(SeasonalEvent).where(
+            SeasonalEvent.is_active == True,
+            SeasonalEvent.start_date <= now_naive,
+            SeasonalEvent.end_date >= now_naive,
+        )
+    )
+    active_events = ev_result.scalars().all()
+    multiplier = 1.0
+    for event in active_events:
+        multiplier *= event.multiplier
+
+    db.add(PointTransaction(
+        user_id=assignment.user_id,
+        amount=base_points,
+        type=PointType.chore_complete,
+        description=f"Completed: {chore.title}",
+        reference_id=assignment.id,
+    ))
+    total_awarded = base_points
+
+    if multiplier > 1.0:
+        bonus_points = int(base_points * multiplier) - base_points
+        if bonus_points > 0:
+            event_names = ", ".join(e.title for e in active_events)
+            db.add(PointTransaction(
+                user_id=assignment.user_id,
+                amount=bonus_points,
+                type=PointType.event_multiplier,
+                description=f"Event bonus ({event_names}): {chore.title}",
+                reference_id=assignment.id,
+            ))
+            total_awarded += bonus_points
+
+    kid_result = await db.execute(select(User).where(User.id == assignment.user_id))
+    kid = kid_result.scalar_one()
+
+    kid.points_balance += total_awarded
+    kid.total_points_earned += total_awarded
+
+    # Pet XP
+    from backend.services.pet_leveling import award_pet_xp_db
+    pet_levelup = await award_pet_xp_db(db, kid, total_awarded)
+    if pet_levelup:
+        db.add(Notification(
+            user_id=kid.id,
+            type=NotificationType.pet_levelup,
+            title="Pet Leveled Up!",
+            message=f"Your pet reached level {pet_levelup['new_level']} — {pet_levelup['name']}!",
+            reference_type="pet",
+        ))
+
+    # Streak
+    if kid.last_streak_date == today:
+        pass
+    elif kid.last_streak_date is not None:
+        gap = (today - kid.last_streak_date).days
+        if gap == 1:
+            kid.current_streak += 1
+            kid.last_streak_date = today
+        elif gap > 1:
+            from backend.routers.vacation import is_vacation_day
+            all_vacation = True
+            for offset in range(1, gap):
+                gap_day = kid.last_streak_date + timedelta(days=offset)
+                if not await is_vacation_day(db, gap_day, user_id=kid.id):
+                    all_vacation = False
+                    break
+            if all_vacation:
+                kid.current_streak += 1
+                kid.last_streak_date = today
+            else:
+                current_month = today.month + today.year * 12
+                freeze_month = kid.streak_freeze_month or 0
+                if kid.current_streak > 0 and freeze_month != current_month:
+                    kid.streak_freezes_used = (kid.streak_freezes_used or 0) + 1
+                    kid.streak_freeze_month = current_month
+                    kid.current_streak += 1
+                    kid.last_streak_date = today
+                else:
+                    kid.current_streak = 1
+                    kid.last_streak_date = today
+    else:
+        kid.current_streak = 1
+        kid.last_streak_date = today
+
+    if kid.current_streak > kid.longest_streak:
+        kid.longest_streak = kid.current_streak
+
+    _STREAK_MILESTONES = (7, 30, 100)
+    if kid.current_streak in _STREAK_MILESTONES:
+        db.add(Notification(
+            user_id=kid.id,
+            type=NotificationType.streak_milestone,
+            title=f"{kid.current_streak}-Day Streak!",
+            message=f"You've completed quests {kid.current_streak} days in a row! Keep it up!",
+            reference_type="streak",
+        ))
+
+    # Deactivate one-time quest rule
+    if chore.recurrence == Recurrence.once:
+        rule_result = await db.execute(
+            select(ChoreAssignmentRule).where(
+                ChoreAssignmentRule.chore_id == chore.id,
+                ChoreAssignmentRule.user_id == assignment.user_id,
+                ChoreAssignmentRule.is_active == True,
+            )
+        )
+        one_time_rule = rule_result.scalar_one_or_none()
+        if one_time_rule:
+            one_time_rule.is_active = False
+
+    db.add(Notification(
+        user_id=assignment.user_id,
+        type=NotificationType.chore_verified,
+        title="Quest Approved!",
+        message=f"'{chore.title}' was approved! You earned {total_awarded} XP!",
+        reference_type="chore_assignment",
+        reference_id=assignment.id,
+    ))
+    await db.commit()
+    await check_achievements(db, kid)
+
+    from backend.routers.avatar import try_quest_drop
+    drop = await try_quest_drop(db, kid, chore.difficulty.value)
+    if drop:
+        await db.commit()
+
+    ws_data = {
+        "chore_id": chore.id,
+        "chore_title": chore.title,
+        "points": total_awarded,
+        "assignment_id": assignment.id,
+    }
+    if drop:
+        ws_data["avatar_drop"] = drop
+
+    await ws_manager.send_to_user(
+        assignment.user_id,
+        {"type": "chore_verified", "data": ws_data},
+    )
+    await ws_manager.broadcast(_CHORE_CHANGED, exclude_user=user.id)
+
+    assignment = await _reload_assignment_with_relations(db, assignment.id)
+    return AssignmentResponse.model_validate(assignment)
+
+
 @router.post("/{chore_id}/uncomplete", response_model=AssignmentResponse)
 async def uncomplete_chore(
     chore_id: int,

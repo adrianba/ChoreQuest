@@ -18,6 +18,7 @@ import {
   Loader2,
   X,
   Trash2,
+  ShieldCheck,
 } from 'lucide-react';
 
 function toISO(date) {
@@ -94,6 +95,7 @@ export default function Calendar() {
   const [tradeError, setTradeError] = useState('');
   const [removingId, setRemovingId] = useState(null);
   const [removeTarget, setRemoveTarget] = useState(null);
+  const [verifyingId, setVerifyingId] = useState(null);
   const [cleaning, setCleaning] = useState(false);
   const [cleanMsg, setCleanMsg] = useState('');
 
@@ -188,6 +190,18 @@ export default function Calendar() {
       setTradeError(err.message || 'Trade failed');
     } finally {
       setTradeSubmitting(false);
+    }
+  };
+
+  const parentVerify = async (assignmentId) => {
+    setVerifyingId(assignmentId);
+    try {
+      await api(`/api/chores/assignments/${assignmentId}/parent-verify`, { method: 'POST' });
+      fetchCalendar();
+    } catch (err) {
+      setError(err.message || 'Failed to verify quest');
+    } finally {
+      setVerifyingId(null);
     }
   };
 
@@ -384,28 +398,46 @@ export default function Calendar() {
                           </button>
                         )}
 
-                        {/* Remove button for parents on pending assignments */}
+                        {/* Parent actions on pending assignments */}
                         {!isKid && a.status === 'pending' && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const isRecurring = a.chore?.recurrence && a.chore.recurrence !== 'once';
-                              if (isRecurring) {
-                                setRemoveTarget(a);
-                              } else {
-                                removeAssignment(a.id);
-                              }
-                            }}
-                            disabled={removingId === a.id}
-                            className="mt-1.5 flex items-center gap-1 text-xs font-medium text-crimson hover:text-crimson/80 transition-colors"
-                          >
-                            {removingId === a.id ? (
-                              <Loader2 size={12} className="animate-spin" />
-                            ) : (
-                              <X size={12} />
-                            )}
-                            Remove
-                          </button>
+                          <div className="mt-1.5 flex items-center gap-3">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                parentVerify(a.id);
+                              }}
+                              disabled={verifyingId === a.id || removingId === a.id}
+                              className="flex items-center gap-1 text-xs font-medium text-emerald hover:text-emerald/80 transition-colors"
+                              title="Mark as verified (parent override)"
+                            >
+                              {verifyingId === a.id ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <ShieldCheck size={12} />
+                              )}
+                              Verify
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const isRecurring = a.chore?.recurrence && a.chore.recurrence !== 'once';
+                                if (isRecurring) {
+                                  setRemoveTarget(a);
+                                } else {
+                                  removeAssignment(a.id);
+                                }
+                              }}
+                              disabled={removingId === a.id || verifyingId === a.id}
+                              className="flex items-center gap-1 text-xs font-medium text-crimson hover:text-crimson/80 transition-colors"
+                            >
+                              {removingId === a.id ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <X size={12} />
+                              )}
+                              Remove
+                            </button>
+                          </div>
                         )}
                       </div>
                     );
