@@ -6,6 +6,8 @@ A parent generates it via POST /api/admin/settings/dashboard-token.
 
 from datetime import date, timedelta
 
+from backend.utils import utc_iso
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,7 +95,7 @@ async def public_dashboard(
                 "chore_title": a.chore.title if a.chore else "Quest",
                 "points": a.chore.points if a.chore else 0,
                 "status": a.status.value if hasattr(a.status, "value") else str(a.status),
-                "completed_at": a.completed_at.isoformat() if a.completed_at else None,
+                "completed_at": utc_iso(a.completed_at),
             })
         # Sort: pending first, then completed/verified
         chore_list.sort(key=lambda c: (c["status"] in ("completed", "verified"),))

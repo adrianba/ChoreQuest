@@ -3,6 +3,8 @@ import os
 import uuid
 from datetime import datetime, date, timezone, timedelta
 
+from backend.utils import utc_iso
+
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy import select, and_, func, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -373,8 +375,8 @@ async def get_chore(
                 "id": a.id,
                 "date": a.date.isoformat(),
                 "status": a.status.value,
-                "completed_at": a.completed_at.isoformat() if a.completed_at else None,
-                "verified_at": a.verified_at.isoformat() if a.verified_at else None,
+                "completed_at": utc_iso(a.completed_at),
+                "verified_at": utc_iso(a.verified_at),
                 "photo_proof_path": a.photo_proof_path,
             }
             for a in kid_assignments

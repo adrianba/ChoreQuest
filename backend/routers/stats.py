@@ -1,5 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 
+from backend.utils import utc_iso
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select, func, or_, and_
@@ -192,7 +194,7 @@ async def get_party(
             "user_name": name_map.get(txn.user_id, "Unknown"),
             "description": txn.description,
             "xp": txn.amount,
-            "timestamp": txn.created_at.isoformat() + 'Z' if txn.created_at else None,
+            "timestamp": utc_iso(txn.created_at),
         })
 
     for drop in recent_drops:
@@ -201,7 +203,7 @@ async def get_party(
             "user_id": drop.user_id,
             "user_name": name_map.get(drop.user_id, "Unknown"),
             "description": drop.message,
-            "timestamp": drop.created_at.isoformat() + 'Z' if drop.created_at else None,
+            "timestamp": utc_iso(drop.created_at),
         })
 
     activity.sort(key=lambda a: a.get("timestamp") or "", reverse=True)
@@ -648,8 +650,8 @@ def _build_kid_assignment(a: ChoreAssignment) -> dict:
         "chore_id": a.chore_id,
         "date": a.date.isoformat() if a.date else None,
         "status": a.status.value,
-        "completed_at": a.completed_at.isoformat() if a.completed_at else None,
-        "verified_at": a.verified_at.isoformat() if a.verified_at else None,
+        "completed_at": utc_iso(a.completed_at),
+        "verified_at": utc_iso(a.verified_at),
         "photo_proof_path": a.photo_proof_path,
         "chore": {
             "id": a.chore.id,

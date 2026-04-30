@@ -4,6 +4,8 @@ import secrets
 import string
 from datetime import datetime, timezone
 
+from backend.utils import utc_iso
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -152,7 +154,7 @@ async def create_api_key(
         "key": raw_key,
         "key_prefix": key_prefix,
         "scopes": api_key.scopes,
-        "created_at": api_key.created_at.isoformat(),
+        "created_at": utc_iso(api_key.created_at),
     }
 
 

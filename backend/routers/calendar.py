@@ -1,5 +1,7 @@
 from datetime import date, timedelta
 
+from backend.utils import utc_iso
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -119,8 +121,8 @@ def _build_assignment_entry(
         "user_id": a.user_id,
         "date": a.date.isoformat(),
         "status": a.status.value if a.status else "pending",
-        "completed_at": a.completed_at.isoformat() if a.completed_at else None,
-        "verified_at": a.verified_at.isoformat() if a.verified_at else None,
+        "completed_at": utc_iso(a.completed_at),
+        "verified_at": utc_iso(a.verified_at),
         "verified_by": a.verified_by,
         "photo_proof_path": a.photo_proof_path,
         "requires_photo": effective_requires_photo,
@@ -146,7 +148,7 @@ def _build_assignment_entry(
             "requires_photo": effective_requires_photo,
             "is_active": a.chore.is_active,
             "created_by": a.chore.created_by,
-            "created_at": a.chore.created_at.isoformat() if a.chore.created_at else None,
+            "created_at": utc_iso(a.chore.created_at),
         }
     if a.user:
         entry["user"] = {
@@ -160,7 +162,7 @@ def _build_assignment_entry(
             "longest_streak": a.user.longest_streak,
             "avatar_config": a.user.avatar_config,
             "is_active": a.user.is_active,
-            "created_at": a.user.created_at.isoformat() if a.user.created_at else None,
+            "created_at": utc_iso(a.user.created_at),
         }
     return entry
 
