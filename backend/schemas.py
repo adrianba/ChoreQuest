@@ -1,6 +1,19 @@
 from datetime import datetime, date
+from typing import Annotated
 from pydantic import BaseModel, Field
+from pydantic.functional_serializers import PlainSerializer
 from backend.models import UserRole, Difficulty, Recurrence, AssignmentStatus, RedemptionStatus, PointType, NotificationType, RotationCadence, BountyClaimStatus
+
+
+def _utc_str(v: datetime) -> str:
+    """Serialize a naive UTC datetime to ISO 8601 with 'Z' suffix."""
+    return v.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+
+
+# Use in Response schemas so all datetime fields get the UTC 'Z' suffix.
+# Without this, Pydantic v2 serializes naive datetimes without a timezone
+# marker and JavaScript treats them as local time.
+UtcDt = Annotated[datetime, PlainSerializer(_utc_str, return_type=str, when_used="json")]
 
 
 # Auth
@@ -49,7 +62,7 @@ class UserResponse(BaseModel):
     streak_freeze_month: int | None = None
     avatar_config: dict | None
     is_active: bool
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -130,7 +143,7 @@ class ChoreResponse(BaseModel):
     is_active: bool
     is_bounty: bool = False
     created_by: int
-    created_at: datetime
+    created_at: UtcDt
     rotation_summary: RotationSummary | None = None
     # Populated by GET /api/chores/{id} when the requester is a kid so
     # ChoreDetail can show the Complete Quest button without a second API call.
@@ -147,8 +160,8 @@ class AssignmentResponse(BaseModel):
     user_id: int
     date: date
     status: AssignmentStatus
-    completed_at: datetime | None
-    verified_at: datetime | None
+    completed_at: UtcDt | None
+    verified_at: UtcDt | None
     verified_by: int | None
     photo_proof_path: str | None
     feedback: str | None = None
@@ -190,7 +203,7 @@ class RewardResponse(BaseModel):
     auto_approve_threshold: int | None
     is_active: bool
     created_by: int
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -202,10 +215,10 @@ class RedemptionResponse(BaseModel):
     points_spent: int
     status: RedemptionStatus
     approved_by: int | None
-    approved_at: datetime | None
+    approved_at: UtcDt | None
     fulfilled_by: int | None = None
-    fulfilled_at: datetime | None = None
-    created_at: datetime
+    fulfilled_at: UtcDt | None = None
+    created_at: UtcDt
     reward: RewardResponse | None = None
     user: UserResponse | None = None
 
@@ -230,7 +243,7 @@ class PointTransactionResponse(BaseModel):
     type: PointType
     description: str
     reference_id: int | None
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -248,7 +261,7 @@ class AchievementResponse(BaseModel):
     group_key: str | None = None
     sort_order: int
     unlocked: bool = False
-    unlocked_at: datetime | None = None
+    unlocked_at: UtcDt | None = None
 
     model_config = {"from_attributes": True}
 
@@ -267,7 +280,7 @@ class NotificationResponse(BaseModel):
     is_read: bool
     reference_type: str | None
     reference_id: int | None
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -313,7 +326,7 @@ class WishlistResponse(BaseModel):
     image_url: str | None
     notes: str | None
     converted_to_reward_id: int | None
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -344,11 +357,11 @@ class EventResponse(BaseModel):
     title: str
     description: str | None
     multiplier: float
-    start_date: datetime
-    end_date: datetime
+    start_date: UtcDt
+    end_date: UtcDt
     is_active: bool
     created_by: int
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -429,9 +442,9 @@ class RotationResponse(BaseModel):
     cadence: RotationCadence
     rotation_day: int
     current_index: int
-    last_rotated: datetime | None
+    last_rotated: UtcDt | None
     inverse_of_chore_id: int | None = None
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -456,9 +469,9 @@ class ApiKeyResponse(BaseModel):
     name: str
     key_prefix: str
     scopes: list
-    last_used_at: datetime | None
+    last_used_at: UtcDt | None
     is_active: bool
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -475,8 +488,8 @@ class InviteCodeResponse(BaseModel):
     role: UserRole
     max_uses: int
     times_used: int
-    expires_at: datetime | None
-    created_at: datetime
+    expires_at: UtcDt | None
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -487,7 +500,7 @@ class AuditLogResponse(BaseModel):
     action: str
     details: dict | None
     ip_address: str | None
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -511,7 +524,7 @@ class ShoutoutResponse(BaseModel):
     to_user_name: str | None = None
     message: str
     emoji: str
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -531,7 +544,7 @@ class VacationResponse(BaseModel):
     user_id: int | None = None
     kid_name: str | None = None  # display name injected by the router
     is_active: bool
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -552,7 +565,7 @@ class AnnouncementResponse(BaseModel):
     is_pinned: bool
     created_by: int
     creator_name: str | None = None
-    created_at: datetime
+    created_at: UtcDt
 
     model_config = {"from_attributes": True}
 
@@ -583,9 +596,9 @@ class BountyClaimResponse(BaseModel):
     status: BountyClaimStatus
     photo_proof_path: str | None
     kid_note: str | None = None
-    claimed_at: datetime
-    completed_at: datetime | None
-    verified_at: datetime | None
+    claimed_at: UtcDt
+    completed_at: UtcDt | None
+    verified_at: UtcDt | None
     verified_by: int | None
 
     model_config = {"from_attributes": True}
