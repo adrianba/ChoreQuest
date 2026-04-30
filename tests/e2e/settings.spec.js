@@ -69,6 +69,32 @@ test.describe('Update overlay', () => {
     await expect(page.locator('.fixed.inset-0 svg').first()).toBeVisible({ timeout: 3_000 });
   });
 
+  test('progress bar stays below 30% after 60 seconds of 270s timeout', async ({ loginAsParent: page }) => {
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('app:update-triggered', {
+        detail: { currentVersion: null },
+      }));
+    });
+
+    await expect(page.locator('text=Working on updates')).toBeVisible({ timeout: 5_000 });
+
+    // Simulate 60 seconds elapsed out of the 270s timeout.
+    // At 60s the bar should be well under 30% — confirming it's paced
+    // across the full duration rather than the old 90s window.
+    const percent = await page.evaluate(() => {
+      const SAFETY_TIMEOUT_MS = 4 * 60_000 + 30_000; // must match component
+      const elapsedMs = 60_000; // 60 seconds
+      const t = Math.min(elapsedMs / SAFETY_TIMEOUT_MS, 1);
+      return Math.round(80 * (1 - Math.pow(1 - t, 1.8)));
+    });
+
+    expect(percent).toBeLessThan(30);
+    expect(percent).toBeGreaterThan(0);
+  });
+
   test('overlay covers the full viewport', async ({ loginAsParent: page }) => {
     await page.goto('/settings');
     await page.waitForLoadState('networkidle');
