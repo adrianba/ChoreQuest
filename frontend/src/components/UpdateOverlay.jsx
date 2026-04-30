@@ -20,10 +20,12 @@ import { createPortal } from 'react-dom';
 const POLL_INTERVAL_MS  = 4_000;
 const SAFETY_TIMEOUT_MS = 4 * 60_000 + 30_000; // 4 min 30 sec — covers slow container rebuilds
 
-// Eased fake-progress: rises fast at first, then slows to a crawl near 80 %.
+// Eased fake-progress: rises steadily then slows near the end.
+// Tied to SAFETY_TIMEOUT_MS so the bar keeps moving the whole time
+// and never appears "stuck" waiting for the restart.
 function fakePercent(elapsedMs) {
-  const t = Math.min(elapsedMs / 90_000, 1);
-  return Math.round(80 * (1 - Math.pow(1 - t, 2.5)));
+  const t = Math.min(elapsedMs / SAFETY_TIMEOUT_MS, 1);
+  return Math.round(80 * (1 - Math.pow(1 - t, 1.8)));
 }
 
 // Spinning-dots row — three dots that pulse in sequence (Windows 11 style).
@@ -343,13 +345,13 @@ export default function UpdateOverlay() {
                 Working on updates
               </p>
               <p className="text-white/40 text-sm">
-                {percent < 30
+                {percent < 20
                   ? 'Pulling latest build…'
-                  : percent < 60
+                  : percent < 45
                   ? 'Rebuilding container…'
-                  : percent < 80
-                  ? 'Almost there…'
-                  : 'Waiting for restart…'}
+                  : percent < 68
+                  ? 'Restarting services…'
+                  : 'Almost there…'}
               </p>
             </>
           )}
