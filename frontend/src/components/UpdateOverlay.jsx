@@ -18,7 +18,7 @@ import { createPortal } from 'react-dom';
  */
 
 const POLL_INTERVAL_MS  = 4_000;
-const SAFETY_TIMEOUT_MS = 4 * 60_000; // 4 min — covers slow container rebuilds
+const SAFETY_TIMEOUT_MS = 4 * 60_000 + 30_000; // 4 min 30 sec — covers slow container rebuilds
 
 // Eased fake-progress: rises fast at first, then slows to a crawl near 80 %.
 function fakePercent(elapsedMs) {
