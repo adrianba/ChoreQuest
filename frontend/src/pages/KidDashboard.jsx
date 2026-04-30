@@ -245,14 +245,14 @@ export default function KidDashboard() {
   // ---- complete today's quest inline ----
 
   const [completingToday, setCompletingToday] = useState(null);
+  // { todayAssignment, overdueAssignment } — set when we need to ask about a matching overdue
+  const [overduePrompt, setOverduePrompt] = useState(null);
 
-  const handleCompleteToday = async (assignment) => {
-    if (completeInFlight.current || completingToday) return;
+  const _doCompleteToday = async (assignment) => {
     completeInFlight.current = true;
     setCompletingToday(assignment.id);
     try {
       await api(`/api/chores/${assignment.chore_id}/complete`, { method: 'POST' });
-      // Optimistically mark as completed so the card disappears immediately
       setAssignments((prev) =>
         prev.map((a) => (a.id === assignment.id ? { ...a, status: 'completed' } : a))
       );
@@ -265,6 +265,34 @@ export default function KidDashboard() {
       completeInFlight.current = false;
       setCompletingToday(null);
     }
+  };
+
+  const handleCompleteToday = async (assignment) => {
+    if (completeInFlight.current || completingToday) return;
+    // Check if there's a matching overdue assignment for the same chore
+    const matchingOverdue = overdueAssignments.find(
+      (a) => a.chore_id === assignment.chore_id
+    );
+    if (matchingOverdue) {
+      // Pause and ask the kid if they also did yesterday's
+      setOverduePrompt({ todayAssignment: assignment, overdueAssignment: matchingOverdue });
+      return;
+    }
+    await _doCompleteToday(assignment);
+  };
+
+  const handleOverduePromptBoth = async () => {
+    const { todayAssignment, overdueAssignment } = overduePrompt;
+    setOverduePrompt(null);
+    // Complete overdue first, then today's
+    await handleCompleteOverdue(overdueAssignment);
+    await _doCompleteToday(todayAssignment);
+  };
+
+  const handleOverduePromptJustToday = async () => {
+    const { todayAssignment } = overduePrompt;
+    setOverduePrompt(null);
+    await _doCompleteToday(todayAssignment);
   };
 
   // ---- pet interaction ----
@@ -751,6 +779,61 @@ export default function KidDashboard() {
           />
         </div>
       )}
+
+      {/* ── Overdue prompt modal ── */}
+      <AnimatePresence>
+        {overduePrompt && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="game-panel w-full max-w-sm p-5 space-y-4"
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+            >
+              <div className="flex items-start gap-3">
+                <AlertTriangle size={20} className="text-gold flex-shrink-0 mt-0.5" />
+                <div>
+                  <h3 className="text-cream text-sm font-bold mb-1">Forgot yesterday's quest?</h3>
+                  <p className="text-muted text-xs leading-relaxed">
+                    You have a pending <span className="text-cream font-semibold">
+                      {overduePrompt.overdueAssignment.chore?.title}
+                    </span> from yesterday. Did you do that one too?
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={handleOverduePromptBoth}
+                  disabled={!!completingToday || !!completingOverdue}
+                  className="game-btn game-btn-blue w-full flex items-center justify-center gap-2"
+                >
+                  <CheckCheck size={15} />
+                  Yes — mark both done
+                </button>
+                <button
+                  onClick={handleOverduePromptJustToday}
+                  disabled={!!completingToday || !!completingOverdue}
+                  className="game-btn w-full flex items-center justify-center gap-2 bg-surface/60 border-white/10 text-muted hover:text-cream"
+                >
+                  <CheckCircle2 size={15} />
+                  Just today
+                </button>
+                <button
+                  onClick={() => setOverduePrompt(null)}
+                  className="text-muted text-xs text-center hover:text-cream transition-colors py-1"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

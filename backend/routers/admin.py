@@ -119,8 +119,10 @@ async def list_api_keys(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin),
 ):
-    """List API keys (without hashes)."""
-    result = await db.execute(select(ApiKey).order_by(ApiKey.created_at.desc()))
+    """List API keys (without hashes). Only returns active (non-revoked) keys."""
+    result = await db.execute(
+        select(ApiKey).where(ApiKey.is_active == True).order_by(ApiKey.created_at.desc())
+    )
     keys = result.scalars().all()
     return [ApiKeyResponse.model_validate(k) for k in keys]
 

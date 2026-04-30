@@ -188,9 +188,22 @@ function ApiKeysTab() {
   // Create modal
   const [createModal, setCreateModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
+  const [newKeyScopes, setNewKeyScopes] = useState([]);
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [newKeyValue, setNewKeyValue] = useState('');
   const [copied, setCopied] = useState(false);
+
+  const AVAILABLE_SCOPES = [
+    { value: 'read', label: 'Read', description: 'View data (chores, assignments, stats)' },
+    { value: 'write', label: 'Write', description: 'Create and update records' },
+    { value: 'admin', label: 'Admin', description: 'Full access including user management' },
+  ];
+
+  const toggleScope = (scope) => {
+    setNewKeyScopes((prev) =>
+      prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope]
+    );
+  };
 
   const fetchKeys = useCallback(async () => {
     setLoading(true);
@@ -215,7 +228,7 @@ function ApiKeysTab() {
     try {
       const data = await api('/api/admin/api-keys', {
         method: 'POST',
-        body: { name: newKeyName.trim() },
+        body: { name: newKeyName.trim(), scopes: newKeyScopes },
       });
       setNewKeyValue(data.key || data.api_key || data.token || '');
       fetchKeys();
@@ -228,11 +241,12 @@ function ApiKeysTab() {
   };
 
   const deleteKey = async (id) => {
+    if (!window.confirm('Revoke this API key? Any apps using it will lose access immediately.')) return;
     try {
       await api(`/api/admin/api-keys/${id}`, { method: 'DELETE' });
       setKeys((prev) => prev.filter((k) => k.id !== id));
     } catch (err) {
-      setError(err.message || 'Failed to delete key');
+      setError(err.message || 'Failed to revoke key');
     }
   };
 
@@ -249,6 +263,7 @@ function ApiKeysTab() {
   const closeCreateModal = () => {
     setCreateModal(false);
     setNewKeyName('');
+    setNewKeyScopes([]);
     setNewKeyValue('');
     setCopied(false);
   };
@@ -303,11 +318,17 @@ function ApiKeysTab() {
                 <span className="text-muted text-xs">
                   Prefix: <span className="text-accent">{k.prefix || k.key_prefix || '***'}</span>
                 </span>
-                {k.scopes && (
-                  <span className="text-muted text-xs">
-                    Scopes: <span className="text-purple">{Array.isArray(k.scopes) ? k.scopes.join(', ') : k.scopes}</span>
-                  </span>
-                )}
+                <span className="text-muted text-xs">
+                  Scopes:{' '}
+                  {Array.isArray(k.scopes) && k.scopes.length > 0
+                    ? k.scopes.map((s) => (
+                        <span key={s} className="inline-block bg-purple/20 text-purple border border-purple/30 rounded px-1.5 py-0.5 text-[10px] font-medium mr-1">
+                          {s}
+                        </span>
+                      ))
+                    : <span className="text-muted/60 italic">none</span>
+                  }
+                </span>
               </div>
             </div>
           ))}
@@ -366,17 +387,43 @@ function ApiKeysTab() {
             </div>
           </div>
         ) : (
-          <div>
-            <label className="block text-cream text-sm font-medium mb-2">
-              Key Name
-            </label>
-            <input
-              type="text"
-              value={newKeyName}
-              onChange={(e) => setNewKeyName(e.target.value)}
-              placeholder="e.g. Mobile App"
-              className="field-input"
-            />
+          <div className="space-y-4">
+            <div>
+              <label className="block text-cream text-sm font-medium mb-2">
+                Key Name
+              </label>
+              <input
+                type="text"
+                value={newKeyName}
+                onChange={(e) => setNewKeyName(e.target.value)}
+                placeholder="e.g. Mobile App"
+                className="field-input"
+              />
+            </div>
+            <div>
+              <label className="block text-cream text-sm font-medium mb-2">
+                Scopes <span className="text-muted font-normal">(optional)</span>
+              </label>
+              <div className="space-y-2">
+                {AVAILABLE_SCOPES.map((s) => (
+                  <label
+                    key={s.value}
+                    className="flex items-start gap-3 p-2.5 rounded-md border border-border hover:border-accent/40 cursor-pointer transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={newKeyScopes.includes(s.value)}
+                      onChange={() => toggleScope(s.value)}
+                      className="mt-0.5 accent-accent"
+                    />
+                    <div>
+                      <span className="text-cream text-sm font-medium">{s.label}</span>
+                      <p className="text-muted text-xs">{s.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </Modal>
