@@ -90,6 +90,9 @@ export default function KidDashboard() {
   const [chores, setChores] = useState([]);
   const [spinAvailability, setSpinAvailability] = useState(null);
   const [myStats, setMyStats] = useState(null);
+  // All pending past-day assignments regardless of whether today's version is done.
+  // Used by the overdue prompt so it fires even when today's is already completed.
+  const allPastPendingRef = useRef([]);
 
   // ui state
   const [loading, setLoading] = useState(true);
@@ -169,6 +172,7 @@ export default function KidDashboard() {
       // completing it again would give double XP and the backend would reject it.
       if (grace_period_days > 0) {
         const overdue = [];
+        const allPastPending = [];
         const allDays = {
           ...(calendarRes.days || {}),
           ...(prevCalendarRes?.days || {}),
@@ -182,16 +186,19 @@ export default function KidDashboard() {
           const dt = new Date(today + 'T00:00:00');
           dt.setDate(dt.getDate() - d);
           const dayStr = toLocalISO(dt);
-          const dayAssignments = (allDays[dayStr] || []).filter(
-            (a) =>
-              a.user_id === user?.id &&
-              a.status === 'pending' &&
-              !completedTodayChoreIds.has(a.chore_id)
+          const pending = (allDays[dayStr] || []).filter(
+            (a) => a.user_id === user?.id && a.status === 'pending'
           );
-          overdue.push(...dayAssignments.map((a) => ({ ...a, _overdue_date: dayStr })));
+          // All pending past assignments — used for the completion prompt
+          allPastPending.push(...pending.map((a) => ({ ...a, _overdue_date: dayStr })));
+          // Visible overdue section excludes chores already done today
+          const visible = pending.filter((a) => !completedTodayChoreIds.has(a.chore_id));
+          overdue.push(...visible.map((a) => ({ ...a, _overdue_date: dayStr })));
         }
+        allPastPendingRef.current = allPastPending;
         setOverdueAssignments(overdue);
       } else {
+        allPastPendingRef.current = [];
         setOverdueAssignments([]);
       }
 
@@ -269,12 +276,13 @@ export default function KidDashboard() {
 
   const handleCompleteToday = async (assignment) => {
     if (completeInFlight.current || completingToday) return;
-    // Check if there's a matching overdue assignment for the same chore
-    const matchingOverdue = overdueAssignments.find(
+    // Check allPastPendingRef (not overdueAssignments) so the prompt fires
+    // even when today's version is already completed/verified — the visible
+    // overdue section hides those but we still want to ask.
+    const matchingOverdue = allPastPendingRef.current.find(
       (a) => a.chore_id === assignment.chore_id
     );
     if (matchingOverdue) {
-      // Pause and ask the kid if they also did yesterday's
       setOverduePrompt({ todayAssignment: assignment, overdueAssignment: matchingOverdue });
       return;
     }
