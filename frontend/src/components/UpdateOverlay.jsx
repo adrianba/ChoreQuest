@@ -139,10 +139,26 @@ export default function UpdateOverlay() {
         }
 
         if (bgWasDownRef.current) {
-          // Server was unreachable and just came back — we missed the broadcast.
-          // Show the overlay; phase-2 detection will fire immediately and reload.
+          // Server was unreachable and just came back — we may have missed the
+          // broadcast.  Only show the overlay when the version actually changed;
+          // skip it for transient network errors (WiFi blip, brief server hiccup)
+          // where the version is unchanged, avoiding the spurious update-screen
+          // described in the bug report.
           bgWasDownRef.current = false;
-          showOverlay(bgVersionRef.current);
+          const prevVersion = bgVersionRef.current;
+
+          if (
+            v &&
+            prevVersion &&
+            prevVersion !== 'unknown' &&
+            v !== 'unknown' &&
+            v !== prevVersion
+          ) {
+            bgVersionRef.current = v; // update baseline only when a real change is detected
+            showOverlay(prevVersion);
+          }
+          // If no version change (transient error), keep bgVersionRef as-is so the
+          // baseline remains accurate for any subsequent recovery detection.
           return;
         }
 
