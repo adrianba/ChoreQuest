@@ -567,6 +567,7 @@ function BountyCard({ bounty, isParent, actionLoading, onClaim, onComplete, onOp
 function ClaimReviewCard({ claim, bounties, actionLoading, onVerify, onReject }) {
   const bounty = bounties.find((b) => b.id === claim.chore_id);
   const isBusy = (key) => actionLoading === key;
+  const title = claim.chore_title || bounty?.title || `Bounty #${claim.chore_id}`;
 
   return (
     <div className="game-panel p-4">
@@ -576,7 +577,7 @@ function ClaimReviewCard({ claim, bounties, actionLoading, onVerify, onReject })
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-cream text-sm font-semibold truncate">
-            {bounty?.title || `Bounty #${claim.chore_id}`}
+            {title}
           </p>
           <p className="text-muted text-xs mt-0.5">
             Completed by <span className="text-cream">{claim.user_display_name || `User ${claim.user_id}`}</span>
