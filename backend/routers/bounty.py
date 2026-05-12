@@ -36,10 +36,11 @@ _WS_BOUNTY_CHANGED = {"type": "data_changed", "data": {"entity": "bounty"}}
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _build_claim(claim: BountyBoardClaim, user: User | None = None) -> BountyClaimResponse:
+def _build_claim(claim: BountyBoardClaim, user: User | None = None, chore_title: str | None = None) -> BountyClaimResponse:
     return BountyClaimResponse(
         id=claim.id,
         chore_id=claim.chore_id,
+        chore_title=chore_title,
         user_id=claim.user_id,
         user_display_name=user.display_name if user else None,
         status=claim.status,
@@ -63,12 +64,12 @@ def _build_bounty(
         is_default=cat.is_default,
     ) if cat else None
 
-    my_claim_resp = _build_claim(my_claim) if my_claim else None
+    my_claim_resp = _build_claim(my_claim, chore_title=chore.title) if my_claim else None
 
     active_statuses = {BountyClaimStatus.claimed, BountyClaimStatus.completed, BountyClaimStatus.verified}
     claim_count = sum(1 for c, _ in all_claims if c.status in active_statuses)
 
-    claims_resp = [_build_claim(c, u) for c, u in all_claims]
+    claims_resp = [_build_claim(c, u, chore_title=chore.title) for c, u in all_claims]
 
     return BountyResponse(
         id=chore.id,
@@ -374,12 +375,13 @@ async def list_pending_claims(
 ):
     """List all completed (awaiting approval) bounty claims. Parent+ only."""
     result = await db.execute(
-        select(BountyBoardClaim, User)
+        select(BountyBoardClaim, User, Chore)
         .join(User, BountyBoardClaim.user_id == User.id)
+        .outerjoin(Chore, BountyBoardClaim.chore_id == Chore.id)
         .where(BountyBoardClaim.status == BountyClaimStatus.completed)
         .order_by(BountyBoardClaim.completed_at.desc())
     )
-    return [_build_claim(claim, user) for claim, user in result.all()]
+    return [_build_claim(claim, user, chore_title=chore.title if chore else None) for claim, user, chore in result.all()]
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +463,7 @@ async def verify_bounty_claim(
             all_vacation = True
             for offset in range(1, gap):
                 gap_day = kid.last_streak_date + timedelta(days=offset)
-                if not await is_vacation_day(db, gap_day):
+                if not await is_vacation_day(db, gap_day, user_id=kid.id):
                     all_vacation = False
                     break
             if all_vacation:

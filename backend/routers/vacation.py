@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select, update
@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import ChoreAssignment, AssignmentStatus, User, UserRole, VacationPeriod
-from backend.schemas import VacationCreate, VacationResponse
+from backend.schemas import VacationCreate, VacationResponse, VacationTrimRequest
 from backend.dependencies import require_parent
 
 router = APIRouter(prefix="/api/vacation", tags=["vacation"])
@@ -99,19 +99,84 @@ async def create_vacation(
     return resp
 
 
+@router.patch("/{vacation_id}", response_model=VacationResponse)
+async def trim_vacation(
+    vacation_id: int,
+    body: VacationTrimRequest,
+    parent: User = Depends(require_parent),
+    db: AsyncSession = Depends(get_db),
+):
+    """Trim a vacation's end date (early return).
+
+    Restores any skipped assignments that fall after the new end date back to
+    pending, so kids get their chores back for the days they're home early.
+    Only future assignments (today or later) are restored — past days stay
+    skipped since those days already passed.
+    """
+    result = await db.execute(
+        select(VacationPeriod).where(VacationPeriod.id == vacation_id, VacationPeriod.is_active == True)
+    )
+    vacation = result.scalar_one_or_none()
+    if not vacation:
+        raise HTTPException(status_code=404, detail="Vacation not found")
+
+    if body.end_date < vacation.start_date:
+        raise HTTPException(status_code=400, detail="New end date cannot be before the vacation start date")
+    if body.end_date >= vacation.end_date:
+        raise HTTPException(status_code=400, detail="New end date must be earlier than the current end date")
+
+    original_end = vacation.end_date
+    vacation.end_date = body.end_date
+
+    # Restore skipped assignments for the now-removed tail of the vacation.
+    # Only restore from today onward — past days are already done/missed.
+    restore_from = max(body.end_date + timedelta(days=1), date.today())
+    restore_filters = [
+        ChoreAssignment.date >= restore_from,
+        ChoreAssignment.date <= original_end,
+        ChoreAssignment.status == AssignmentStatus.skipped,
+    ]
+    if vacation.user_id is not None:
+        restore_filters.append(ChoreAssignment.user_id == vacation.user_id)
+
+    await db.execute(
+        update(ChoreAssignment).where(*restore_filters).values(status=AssignmentStatus.pending)
+    )
+    await db.commit()
+    await db.refresh(vacation)
+    return vacation
+
+
 @router.delete("/{vacation_id}", status_code=204)
 async def cancel_vacation(
     vacation_id: int,
     parent: User = Depends(require_parent),
     db: AsyncSession = Depends(get_db),
 ):
-    """Cancel a vacation period."""
+    """Cancel a vacation period entirely.
+
+    Restores all future skipped assignments that were covered by this vacation
+    back to pending so kids get their chores back immediately.
+    """
     result = await db.execute(
         select(VacationPeriod).where(VacationPeriod.id == vacation_id)
     )
     vacation = result.scalar_one_or_none()
     if not vacation:
         raise HTTPException(status_code=404, detail="Vacation not found")
+
+    restore_from = max(vacation.start_date, date.today())
+    restore_filters = [
+        ChoreAssignment.date >= restore_from,
+        ChoreAssignment.date <= vacation.end_date,
+        ChoreAssignment.status == AssignmentStatus.skipped,
+    ]
+    if vacation.user_id is not None:
+        restore_filters.append(ChoreAssignment.user_id == vacation.user_id)
+
+    await db.execute(
+        update(ChoreAssignment).where(*restore_filters).values(status=AssignmentStatus.pending)
+    )
 
     vacation.is_active = False
     await db.commit()

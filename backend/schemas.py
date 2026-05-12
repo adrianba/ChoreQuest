@@ -536,6 +536,10 @@ class VacationCreate(BaseModel):
     user_id: int | None = None  # None = family-wide; set = specific kid only
 
 
+class VacationTrimRequest(BaseModel):
+    end_date: date  # new (earlier) end date — must be >= start_date and < current end_date
+
+
 class VacationResponse(BaseModel):
     id: int
     start_date: date
@@ -591,6 +595,7 @@ class PetInteractionRequest(BaseModel):
 class BountyClaimResponse(BaseModel):
     id: int
     chore_id: int
+    chore_title: str | None = None  # injected by router so Review Claims always has a title
     user_id: int
     user_display_name: str | None = None
     status: BountyClaimStatus

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 import { todayLocalISO } from '../utils/dates';
-import { Palmtree, Trash2, Plus, Loader2, Users, User } from 'lucide-react';
+import { Palmtree, Trash2, Plus, Loader2, Users, User, LogIn } from 'lucide-react';
 
 export default function VacationSettings() {
   const [vacations, setVacations]   = useState([]);
@@ -15,6 +15,8 @@ export default function VacationSettings() {
   const [kidsLoading, setKidsLoading] = useState(false);
   const [saving, setSaving]         = useState(false);
   const [error, setError]           = useState('');
+  const [earlyReturnId, setEarlyReturnId] = useState(null); // vacation id being trimmed
+  const [earlyReturnDate, setEarlyReturnDate] = useState('');
 
   const fetchVacations = useCallback(async () => {
     try {
@@ -80,6 +82,24 @@ export default function VacationSettings() {
       fetchVacations();
     } catch {
       // ignore
+    }
+  };
+
+  const confirmEarlyReturn = async () => {
+    if (!earlyReturnId || !earlyReturnDate) return;
+    setSaving(true);
+    try {
+      await api(`/api/vacation/${earlyReturnId}`, {
+        method: 'PATCH',
+        body: { end_date: earlyReturnDate },
+      });
+      setEarlyReturnId(null);
+      setEarlyReturnDate('');
+      fetchVacations();
+    } catch (err) {
+      setError(err.message || 'Failed to update vacation');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -217,7 +237,7 @@ export default function VacationSettings() {
             return (
               <div
                 key={v.id}
-                className={`flex items-center justify-between px-3 py-2.5 rounded-lg border ${
+                className={`rounded-lg border ${
                   isActive
                     ? 'border-emerald/30 bg-emerald/5'
                     : isPast
@@ -225,38 +245,82 @@ export default function VacationSettings() {
                       : 'border-border/50 bg-surface-raised/20'
                 }`}
               >
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-cream text-sm font-medium">
-                      {v.start_date} &rarr; {v.end_date}
-                    </p>
-                    {/* Scope badge */}
-                    {isPerKid ? (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-accent/10 text-accent border border-accent/20">
-                        <User size={8} />
-                        {v.kid_name || `Kid #${v.user_id}`}
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-emerald/10 text-emerald border border-emerald/20">
-                        <Users size={8} />
-                        Family
-                      </span>
+                <div className="flex items-center justify-between px-3 py-2.5">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-cream text-sm font-medium">
+                        {v.start_date} &rarr; {v.end_date}
+                      </p>
+                      {isPerKid ? (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-accent/10 text-accent border border-accent/20">
+                          <User size={8} />
+                          {v.kid_name || `Kid #${v.user_id}`}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-emerald/10 text-emerald border border-emerald/20">
+                          <Users size={8} />
+                          Family
+                        </span>
+                      )}
+                    </div>
+                    {isActive && (
+                      <p className="text-emerald text-[10px] font-semibold uppercase mt-0.5">
+                        Active now
+                      </p>
                     )}
                   </div>
-                  {isActive && (
-                    <p className="text-emerald text-[10px] font-semibold uppercase mt-0.5">
-                      Active now
-                    </p>
+                  {!isPast && (
+                    <div className="flex items-center gap-1">
+                      {isActive && earlyReturnId !== v.id && (
+                        <button
+                          onClick={() => { setEarlyReturnId(v.id); setEarlyReturnDate(today); setError(''); }}
+                          className="text-muted hover:text-accent transition-colors p-1"
+                          title="Return early — trim end date"
+                        >
+                          <LogIn size={14} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => cancel(v.id)}
+                        className="text-muted hover:text-crimson transition-colors p-1"
+                        title="Cancel vacation entirely"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   )}
                 </div>
-                {!isPast && (
-                  <button
-                    onClick={() => cancel(v.id)}
-                    className="text-muted hover:text-crimson transition-colors p-1"
-                    title="Cancel vacation"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+
+                {/* Inline early-return date picker */}
+                {earlyReturnId === v.id && (
+                  <div className="px-3 pb-3 space-y-2 border-t border-border/30 pt-2">
+                    <p className="text-muted text-[10px] font-semibold uppercase">Set new end date</p>
+                    <input
+                      type="date"
+                      value={earlyReturnDate}
+                      onChange={(e) => setEarlyReturnDate(e.target.value)}
+                      min={today}
+                      max={v.end_date}
+                      className="field-input text-sm"
+                    />
+                    {error && <p className="text-crimson text-xs">{error}</p>}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={confirmEarlyReturn}
+                        disabled={saving || !earlyReturnDate || earlyReturnDate >= v.end_date}
+                        className="game-btn game-btn-blue !py-1 !px-3 !text-xs flex items-center gap-1"
+                      >
+                        {saving ? <Loader2 size={11} className="animate-spin" /> : <LogIn size={11} />}
+                        We're Back!
+                      </button>
+                      <button
+                        onClick={() => { setEarlyReturnId(null); setEarlyReturnDate(''); setError(''); }}
+                        className="text-muted hover:text-cream text-xs transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             );
