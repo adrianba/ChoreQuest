@@ -981,7 +981,7 @@ async def complete_chore(
     for pid in parent_ids:
         db.add(Notification(
             user_id=pid,
-            type=NotificationType.chore_completed,
+            type=NotificationType.chore_submitted,
             title="Quest Awaiting Approval",
             message=f"{user.display_name} completed '{chore.title}' - tap to approve (+{chore.points} XP)",
             reference_type="kid_quest",

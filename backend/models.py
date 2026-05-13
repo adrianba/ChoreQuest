@@ -73,6 +73,9 @@ class NotificationType(str, enum.Enum):
     bounty_claimed = "bounty_claimed"
     bounty_verified = "bounty_verified"
     bounty_rejected = "bounty_rejected"
+    chore_submitted = "chore_submitted"
+    bounty_submitted = "bounty_submitted"
+    reward_redeemed = "reward_redeemed"
 
 
 class BountyClaimStatus(str, enum.Enum):

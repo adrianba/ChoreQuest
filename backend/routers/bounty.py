@@ -330,7 +330,7 @@ async def complete_bounty(
     for parent in parent_result.scalars().all():
         db.add(Notification(
             user_id=parent.id,
-            type=NotificationType.chore_completed,
+            type=NotificationType.bounty_submitted,
             title="Bounty Ready to Verify!",
             message=f"{current_user.display_name} completed the bounty: {chore_title}",
             reference_type="bounty_claim",
