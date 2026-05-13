@@ -202,8 +202,11 @@ app.include_router(public.router)
 @app.get("/api/health")
 async def health():
     import os
+    from pathlib import Path
+    updating = Path("/app/data/.update_in_progress").exists()
     return {
-        "status": "ok",
+        "status": "updating" if updating else "ok",
+        "updating": updating,
         "version": os.environ.get("GIT_COMMIT", "unknown"),
         "build_date": os.environ.get("BUILD_DATE", "unknown"),
     }

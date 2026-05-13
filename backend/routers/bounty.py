@@ -235,7 +235,7 @@ async def claim_bounty(
             await db.commit()
             await db.refresh(existing_claim)
             await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-            return _build_claim(existing_claim)
+            return _build_claim(existing_claim, current_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
         raise HTTPException(status_code=409, detail="You have already claimed this bounty")
 
     claim = BountyBoardClaim(
@@ -263,7 +263,7 @@ async def claim_bounty(
     await db.commit()
     await db.refresh(claim)
     await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-    return _build_claim(claim)
+    return _build_claim(claim, current_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +338,7 @@ async def complete_bounty(
     await db.commit()
     await db.refresh(claim)
     await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-    return _build_claim(claim)
+    return _build_claim(claim, current_user, chore_title=chore.title if chore else None, chore_points=chore.points if chore else None, chore_requires_photo=chore.requires_photo if chore else False)
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +544,7 @@ async def verify_bounty_claim(
     })
     await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
 
-    return _build_claim(claim)
+    return _build_claim(claim, kid, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
 
 
 # ---------------------------------------------------------------------------
@@ -595,7 +595,7 @@ async def reject_bounty_claim(
     await db.commit()
     await db.refresh(claim)
     await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-    return _build_claim(claim)
+    return _build_claim(claim, chore_title=chore.title if chore else None, chore_points=chore.points if chore else None, chore_requires_photo=chore.requires_photo if chore else False)
 
 
 # ---------------------------------------------------------------------------

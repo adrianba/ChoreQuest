@@ -86,6 +86,11 @@ export default function UpdateOverlay() {
   // that is the definitive "container restarted" signal even when GIT_COMMIT
   // is "unknown" on both old and new builds.
   const serverWentDownRef       = useRef(false);
+  // Set when the overlay is triggered by the lock-file flag (updating:true on
+  // fresh load).  In this case the container may already be the new one, so we
+  // dismiss once the lock file is gone (updating:false) rather than waiting for
+  // a version change or a server-down event that will never happen.
+  const triggeredByLockFileRef  = useRef(false);
   // Passive background monitor — tracks baseline version so we can detect
   // a restart even when the WS broadcast was missed (mobile sleeping tab).
   const bgVersionRef            = useRef(null);
@@ -95,10 +100,11 @@ export default function UpdateOverlay() {
   // ------------------------------------------------------------------
   // Show overlay — shared handler used by both trigger sources below.
   // ------------------------------------------------------------------
-  const showOverlay = (currentVersion) => {
-    startVersionRef.current   = currentVersion ?? null;
-    startTimeRef.current      = Date.now();
-    serverWentDownRef.current = false;
+  const showOverlay = (currentVersion, { fromLockFile = false } = {}) => {
+    startVersionRef.current        = currentVersion ?? null;
+    startTimeRef.current           = Date.now();
+    serverWentDownRef.current      = false;
+    triggeredByLockFileRef.current = fromLockFile;
     setPercent(0);
     setDone(false);
     setTimedOut(false);
@@ -135,6 +141,11 @@ export default function UpdateOverlay() {
 
         if (bgVersionRef.current === null) {
           bgVersionRef.current = v; // baseline on first check
+          // Fresh page load during an in-progress update: the lock file exists
+          // on disk so the health endpoint returns updating:true.  Show the
+          // overlay immediately — the WS broadcast already happened before this
+          // device connected so it was never received.
+          if (data?.updating) showOverlay(v, { fromLockFile: true });
           return;
         }
 
@@ -255,6 +266,15 @@ export default function UpdateOverlay() {
         // Phase 2: server went offline then came back — container restarted.
         // Reliable even when GIT_COMMIT is "unknown" on both old and new builds.
         if (serverWentDownRef.current) {
+          completeUpdate();
+          return;
+        }
+
+        // Phase 3: overlay was triggered by the lock file on fresh load.
+        // The container may have already restarted before we connected, so
+        // version won't change and the server may never go down.  Dismiss
+        // as soon as the watchdog removes the lock file (updating:false).
+        if (triggeredByLockFileRef.current && !data?.updating) {
           completeUpdate();
           return;
         }
