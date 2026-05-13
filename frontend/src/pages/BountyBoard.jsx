@@ -458,7 +458,7 @@ function BountyCard({ bounty, isParent, actionLoading, onClaim, onComplete, onOp
       {/* Kid action buttons */}
       {!isParent && (
         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-border/50">
-          {!claim && (
+          {(!claim || claim.status === 'abandoned') && (
             <button
               onClick={() => onClaim(bounty.id)}
               disabled={isBusy(`claim-${bounty.id}`)}
