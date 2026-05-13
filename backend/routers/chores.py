@@ -866,7 +866,10 @@ async def complete_chore(
         select(AppSetting).where(AppSetting.key == "grace_period_days")
     )
     grace_setting = grace_result.scalar_one_or_none()
-    grace_days = int(grace_setting.value) if grace_setting else 1
+    try:
+        grace_days = int(grace_setting.value) if grace_setting else 1
+    except ValueError:
+        grace_days = 1
     earliest = today - timedelta(days=grace_days)
 
     # Guard: prevent completing today's assignment twice — prevents double XP.
@@ -1421,19 +1424,22 @@ async def uncomplete_chore(
 @router.post("/{chore_id}/skip", response_model=AssignmentResponse)
 async def skip_chore(
     chore_id: int,
+    kid_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_parent),
 ):
     today = date.today()
     now = datetime.now(timezone.utc)
 
-    result = await db.execute(
-        select(ChoreAssignment).where(
-            ChoreAssignment.chore_id == chore_id,
-            ChoreAssignment.date == today,
-            ChoreAssignment.status == AssignmentStatus.pending,
-        )
-    )
+    filters = [
+        ChoreAssignment.chore_id == chore_id,
+        ChoreAssignment.date == today,
+        ChoreAssignment.status == AssignmentStatus.pending,
+    ]
+    if kid_id is not None:
+        filters.append(ChoreAssignment.user_id == kid_id)
+
+    result = await db.execute(select(ChoreAssignment).where(*filters))
     assignment = result.scalar_one_or_none()
     if assignment is None:
         raise HTTPException(
