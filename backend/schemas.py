@@ -294,6 +294,7 @@ class SpinAvailabilityResponse(BaseModel):
     can_spin: bool
     last_result: int | None = None
     reason: str | None = None
+    spin_credits: int = 0
 
 
 # Calendar

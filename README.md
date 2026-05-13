@@ -17,7 +17,7 @@ A gamified family chore management app with full RPG theming. Parents create que
 | 🎭 **Custom Avatars** | Full SVG editor — heads, hair, eyes, mouths, hats, gear, outfits, body shapes |
 | 🐾 **Pets** | 6 companions that level up through 8 tiers; feed, pet, and play daily for bonus XP |
 | 🛒 **Avatar Shop** | Unlock items by spending XP, reaching milestones, or random quest drops |
-| 🎰 **Daily Spin Wheel** | Bonus XP wheel unlocked when all daily quests are done |
+| 🎰 **Daily Spin Wheel** | Bonus XP wheel with spin credits earned from fully approved daily quests |
 | 🏪 **Treasure Shop** | Parents create rewards, kids redeem with XP |
 | 📋 **Wishlist** | Kids add wish items; parents convert them into rewards |
 | 🔄 **Quest Trading** | Siblings swap quests via the calendar with real-time notifications |
