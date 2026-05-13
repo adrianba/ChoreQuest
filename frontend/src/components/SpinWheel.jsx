@@ -20,6 +20,10 @@ const SEGMENTS = [
 
 const SEGMENT_ANGLE = 360 / SEGMENTS.length;
 
+function normalizeDegrees(value) {
+  return ((value % 360) + 360) % 360;
+}
+
 function polarToCartesian(cx, cy, r, angleDeg) {
   const rad = ((angleDeg - 90) * Math.PI) / 180;
   return {
@@ -77,8 +81,10 @@ export default function SpinWheel({ availability, onSpinComplete }) {
 
       // Calculate target rotation
       const segmentCenter = targetIdx * SEGMENT_ANGLE + SEGMENT_ANGLE / 2;
+      const currentRotation = normalizeDegrees(rotation);
       const fullSpins = 5 + Math.floor(Math.random() * 3);
-      const targetRotation = rotation + fullSpins * 360 + (360 - segmentCenter);
+      const alignSegmentToPointer = normalizeDegrees(360 - (segmentCenter + currentRotation));
+      const targetRotation = rotation + fullSpins * 360 + alignSegmentToPointer;
 
       setRotation(targetRotation);
 
