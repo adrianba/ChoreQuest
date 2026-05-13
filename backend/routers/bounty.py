@@ -36,11 +36,19 @@ _WS_BOUNTY_CHANGED = {"type": "data_changed", "data": {"entity": "bounty"}}
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _build_claim(claim: BountyBoardClaim, user: User | None = None, chore_title: str | None = None) -> BountyClaimResponse:
+def _build_claim(
+    claim: BountyBoardClaim,
+    user: User | None = None,
+    chore_title: str | None = None,
+    chore_points: int | None = None,
+    chore_requires_photo: bool = False,
+) -> BountyClaimResponse:
     return BountyClaimResponse(
         id=claim.id,
         chore_id=claim.chore_id,
         chore_title=chore_title,
+        chore_points=chore_points,
+        chore_requires_photo=chore_requires_photo,
         user_id=claim.user_id,
         user_display_name=user.display_name if user else None,
         status=claim.status,
@@ -64,12 +72,12 @@ def _build_bounty(
         is_default=cat.is_default,
     ) if cat else None
 
-    my_claim_resp = _build_claim(my_claim, chore_title=chore.title) if my_claim else None
+    my_claim_resp = _build_claim(my_claim, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo) if my_claim else None
 
     active_statuses = {BountyClaimStatus.claimed, BountyClaimStatus.completed, BountyClaimStatus.verified}
     claim_count = sum(1 for c, _ in all_claims if c.status in active_statuses)
 
-    claims_resp = [_build_claim(c, u, chore_title=chore.title) for c, u in all_claims]
+    claims_resp = [_build_claim(c, u, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo) for c, u in all_claims]
 
     return BountyResponse(
         id=chore.id,
@@ -381,7 +389,15 @@ async def list_pending_claims(
         .where(BountyBoardClaim.status == BountyClaimStatus.completed)
         .order_by(BountyBoardClaim.completed_at.desc())
     )
-    return [_build_claim(claim, user, chore_title=chore.title if chore else None) for claim, user, chore in result.all()]
+    return [
+        _build_claim(
+            claim, user,
+            chore_title=chore.title if chore else None,
+            chore_points=chore.points if chore else None,
+            chore_requires_photo=chore.requires_photo if chore else False,
+        )
+        for claim, user, chore in result.all()
+    ]
 
 
 # ---------------------------------------------------------------------------

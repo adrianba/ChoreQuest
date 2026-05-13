@@ -15,6 +15,7 @@ import {
   MessageSquare,
   Send,
   CalendarDays,
+  Swords,
 } from 'lucide-react';
 import { useTheme } from '../hooks/useTheme';
 import { themedTitle } from '../utils/questThemeText';
@@ -35,6 +36,19 @@ function getDateLabel(dateStr) {
   return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+/** Normalize a backend UTC datetime string to a proper UTC Date (appends 'Z' if missing). */
+function parseUtcDate(dtStr) {
+  if (!dtStr) return null;
+  const utcStr = /Z|[+-]\d\d:?\d\d$/.test(dtStr) ? dtStr : dtStr + 'Z';
+  return new Date(utcStr);
+}
+
+/** Convert a UTC datetime string from the backend to a local YYYY-MM-DD string. */
+function utcToLocalDateISO(dtStr) {
+  const d = parseUtcDate(dtStr);
+  return d ? toLocalISO(d) : '';
+}
+
 export default function ParentDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -42,6 +56,7 @@ export default function ParentDashboard() {
 
   const [familyStats, setFamilyStats] = useState([]);
   const [pendingVerifications, setPendingVerifications] = useState([]);
+  const [pendingBountyClaims, setPendingBountyClaims] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -61,9 +76,10 @@ export default function ParentDashboard() {
     try {
       setError(null);
 
-      const [familyRes, calendarRes] = await Promise.all([
+      const [familyRes, calendarRes, bountyClaimsRes] = await Promise.all([
         api('/api/stats/family'),
         api('/api/calendar'),
+        api('/api/bounty/claims'),
       ]);
 
       setFamilyStats(familyRes);
@@ -75,6 +91,7 @@ export default function ParentDashboard() {
         .filter((a) => a.status === 'completed')
         .sort((a, b) => b.date.localeCompare(a.date));
       setPendingVerifications(needsVerification);
+      setPendingBountyClaims(bountyClaimsRes || []);
     } catch (err) {
       setError(err.message || 'Failed to load family data');
     } finally {
@@ -117,6 +134,32 @@ export default function ParentDashboard() {
       await fetchData();
     } catch (err) {
       setError(err.message || 'Failed to reject chore');
+    } finally {
+      setActionBusy(key, false);
+    }
+  };
+
+  const handleVerifyBounty = async (claimId) => {
+    const key = `bounty-verify-${claimId}`;
+    setActionBusy(key, true);
+    try {
+      await api(`/api/bounty/claims/${claimId}/verify`, { method: 'POST' });
+      await fetchData();
+    } catch (err) {
+      setError(err.message || 'Failed to verify bounty');
+    } finally {
+      setActionBusy(key, false);
+    }
+  };
+
+  const handleRejectBounty = async (claimId) => {
+    const key = `bounty-reject-${claimId}`;
+    setActionBusy(key, true);
+    try {
+      await api(`/api/bounty/claims/${claimId}/reject`, { method: 'POST' });
+      await fetchData();
+    } catch (err) {
+      setError(err.message || 'Failed to reject bounty');
     } finally {
       setActionBusy(key, false);
     }
@@ -191,7 +234,7 @@ export default function ParentDashboard() {
     );
   }
 
-  const hasPendingItems = pendingVerifications.length > 0;
+  const hasPendingItems = pendingVerifications.length > 0 || pendingBountyClaims.length > 0;
 
   return (
     <div className="max-w-3xl mx-auto space-y-4">
@@ -387,6 +430,101 @@ export default function ParentDashboard() {
                     <p className="mt-1.5 ml-5 text-muted text-xs italic">
                       Feedback: {assignment.feedback}
                     </p>
+                  )}
+                </div>
+              );
+            })}
+
+            {pendingBountyClaims.map((claim) => {
+              const verifyKey = `bounty-verify-${claim.id}`;
+              const rejectKey = `bounty-reject-${claim.id}`;
+              const isVerifying = actionLoading[verifyKey];
+              const isRejecting = actionLoading[rejectKey];
+              const isBusy = isVerifying || isRejecting;
+              const claimDate = utcToLocalDateISO(claim.completed_at);
+              const isToday = claimDate === todayLocalISO();
+
+              return (
+                <div
+                  key={`bounty-${claim.id}`}
+                  className="game-panel p-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p
+                          className="text-cream text-sm font-medium truncate cursor-pointer hover:text-accent transition-colors"
+                          onClick={() => navigate(`/bounty`)}
+                        >
+                          {themedTitle(claim.chore_title || 'Bounty', colorTheme)}
+                        </p>
+                        <span className="inline-flex items-center gap-1 text-purple-400 text-xs font-medium flex-shrink-0">
+                          <Swords size={10} /> Bounty
+                        </span>
+                      </div>
+                      <p className="text-muted text-xs mt-0.5">
+                        by {claim.user_display_name || 'Kid'}
+                        {claim.chore_requires_photo && (
+                          <span className="inline-flex items-center gap-1 ml-2 text-accent">
+                            <Camera size={10} /> Photo
+                          </span>
+                        )}
+                        {claim.chore_points != null && (
+                          <span className="ml-2 text-gold font-medium">+{claim.chore_points} XP</span>
+                        )}
+                      </p>
+                      {claimDate && (
+                        <p className="flex items-center gap-1 text-xs mt-1">
+                          <CalendarDays size={11} className={isToday ? 'text-accent' : 'text-orange-400'} />
+                          <span className={isToday ? 'text-accent font-medium' : 'text-orange-400 font-medium'}>
+                            {getDateLabel(claimDate)}
+                          </span>
+                          {claim.completed_at && (
+                            <span className="text-muted ml-1">
+                              · submitted {parseUtcDate(claim.completed_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                            </span>
+                          )}
+                        </p>
+                      )}
+                      {claim.kid_note && (
+                        <p className="mt-1 text-muted text-xs italic">"{claim.kid_note}"</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button
+                        className="game-btn game-btn-blue !px-2.5 !py-1.5"
+                        disabled={isBusy}
+                        onClick={() => handleVerifyBounty(claim.id)}
+                        title="Approve"
+                      >
+                        {isVerifying ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <CheckCircle2 size={14} />
+                        )}
+                      </button>
+                      <button
+                        className="game-btn game-btn-red !px-2.5 !py-1.5"
+                        disabled={isBusy}
+                        onClick={() => handleRejectBounty(claim.id)}
+                        title="Reject"
+                      >
+                        {isRejecting ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <XCircle size={14} />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  {claim.photo_proof_path && (
+                    <div className="mt-2">
+                      <img
+                        src={`/api/uploads/${claim.photo_proof_path}`}
+                        alt="Photo proof"
+                        className="rounded-md max-h-48 object-cover border border-border"
+                      />
+                    </div>
                   )}
                 </div>
               );
