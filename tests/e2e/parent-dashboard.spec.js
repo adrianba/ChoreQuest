@@ -302,20 +302,19 @@ test.describe('Parent Dashboard — bounty claim approvals', () => {
     await page.reload();
     await page.waitForLoadState('networkidle');
 
-    // Scope to the bounty card specifically so we don't accidentally click a
-    // regular chore approval button if any are also in the queue.
-    const bountyCard = page.locator('.game-panel', { has: page.locator('text=Bounty') }).first();
-    await expect(bountyCard).toBeVisible({ timeout: 10_000 });
-    const approveBtn = bountyCard.locator('[title="Approve"]');
-    await expect(approveBtn).toBeVisible();
+    // Count only bounty cards so other tests' pending chore approvals don't interfere
+    const bountyCards = page.locator('.game-panel', { has: page.locator('text=Bounty') });
+    await expect(bountyCards.first()).toBeVisible({ timeout: 10_000 });
+    const countBefore = await bountyCards.count();
 
-    const countBefore = await page.locator('[title="Approve"]').count();
+    const approveBtn = bountyCards.first().locator('[title="Approve"]');
+    await expect(approveBtn).toBeVisible();
     await approveBtn.click();
     await page.waitForLoadState('networkidle');
 
     await expect(page.locator('text=/error/i')).not.toBeVisible({ timeout: 3_000 }).catch(() => {});
-    const countAfter = await page.locator('[title="Approve"]').count();
-    expect(countAfter).toBeLessThan(countBefore);
+    // Poll until React re-renders the updated list
+    await expect.poll(() => bountyCards.count(), { timeout: 10_000 }).toBeLessThan(countBefore);
   });
 
   test('rejecting a bounty claim via UI removes it from the pending list', async ({ loginAsParent: page }) => {
@@ -325,18 +324,17 @@ test.describe('Parent Dashboard — bounty claim approvals', () => {
     await page.reload();
     await page.waitForLoadState('networkidle');
 
-    const bountyCard = page.locator('.game-panel', { has: page.locator('text=Bounty') }).first();
-    await expect(bountyCard).toBeVisible({ timeout: 10_000 });
-    const rejectBtn = bountyCard.locator('[title="Reject"]');
-    await expect(rejectBtn).toBeVisible();
+    const bountyCards = page.locator('.game-panel', { has: page.locator('text=Bounty') });
+    await expect(bountyCards.first()).toBeVisible({ timeout: 10_000 });
+    const countBefore = await bountyCards.count();
 
-    const countBefore = await page.locator('[title="Reject"]').count();
+    const rejectBtn = bountyCards.first().locator('[title="Reject"]');
+    await expect(rejectBtn).toBeVisible();
     await rejectBtn.click();
     await page.waitForLoadState('networkidle');
 
     await expect(page.locator('text=/error/i')).not.toBeVisible({ timeout: 3_000 }).catch(() => {});
-    const countAfter = await page.locator('[title="Reject"]').count();
-    expect(countAfter).toBeLessThan(countBefore);
+    await expect.poll(() => bountyCards.count(), { timeout: 10_000 }).toBeLessThan(countBefore);
   });
 });
 
