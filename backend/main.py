@@ -23,6 +23,10 @@ from backend.services.push_hook import install_push_hooks
 
 logger = logging.getLogger(__name__)
 
+# Recorded once at startup so the health endpoint can detect container restarts
+# even when GIT_COMMIT is "unknown" on both old and new builds.
+_PROCESS_START_TIME = datetime.now(timezone.utc).isoformat()
+
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
 
@@ -202,13 +206,13 @@ app.include_router(public.router)
 @app.get("/api/health")
 async def health():
     import os
-    from pathlib import Path
     updating = Path("/app/data/.update_in_progress").exists()
     return {
         "status": "updating" if updating else "ok",
         "updating": updating,
         "version": os.environ.get("GIT_COMMIT", "unknown"),
         "build_date": os.environ.get("BUILD_DATE", "unknown"),
+        "started_at": _PROCESS_START_TIME,
     }
 
 

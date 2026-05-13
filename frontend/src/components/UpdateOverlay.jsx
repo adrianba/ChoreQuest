@@ -78,6 +78,7 @@ export default function UpdateOverlay() {
   const [done, setDone]         = useState(false);
   const [timedOut, setTimedOut] = useState(false);
   const startVersionRef         = useRef(null);
+  const startStartedAtRef       = useRef(null);
   const startTimeRef            = useRef(null);
   const pollTimerRef            = useRef(null);
   const safetyTimerRef          = useRef(null);
@@ -91,17 +92,19 @@ export default function UpdateOverlay() {
   // dismiss once the lock file is gone (updating:false) rather than waiting for
   // a version change or a server-down event that will never happen.
   const triggeredByLockFileRef  = useRef(false);
-  // Passive background monitor — tracks baseline version so we can detect
-  // a restart even when the WS broadcast was missed (mobile sleeping tab).
+  // Passive background monitor — tracks baseline version and process start time
+  // so we can detect a restart even when GIT_COMMIT is "unknown" on both builds.
   const bgVersionRef            = useRef(null);
+  const bgStartedAtRef          = useRef(null);
   const bgWasDownRef            = useRef(false);
   const visibleRef              = useRef(false);
 
   // ------------------------------------------------------------------
   // Show overlay — shared handler used by both trigger sources below.
   // ------------------------------------------------------------------
-  const showOverlay = (currentVersion, { fromLockFile = false } = {}) => {
+  const showOverlay = (currentVersion, { fromLockFile = false, startedAt = null } = {}) => {
     startVersionRef.current        = currentVersion ?? null;
+    startStartedAtRef.current      = startedAt ?? null;
     startTimeRef.current           = Date.now();
     serverWentDownRef.current      = false;
     triggeredByLockFileRef.current = fromLockFile;
@@ -139,41 +142,42 @@ export default function UpdateOverlay() {
         const data = await res.json();
         const v    = data?.version;
 
+        const startedAt = data?.started_at ?? null;
+
         if (bgVersionRef.current === null) {
-          bgVersionRef.current = v; // baseline on first check
+          bgVersionRef.current  = v;         // baseline on first check
+          bgStartedAtRef.current = startedAt;
           // Fresh page load during an in-progress update: the lock file exists
           // on disk so the health endpoint returns updating:true.  Show the
           // overlay immediately — the WS broadcast already happened before this
           // device connected so it was never received.
-          if (data?.updating) showOverlay(v, { fromLockFile: true });
+          if (data?.updating) showOverlay(v, { fromLockFile: true, startedAt });
           return;
         }
 
         if (bgWasDownRef.current) {
-          // Server was unreachable and just came back — we may have missed the
-          // broadcast.  Only show the overlay when the version actually changed;
-          // skip it for transient network errors (WiFi blip, brief server hiccup)
-          // where the version is unchanged, avoiding the spurious update-screen
-          // described in the bug report.
+          // Server was unreachable and just came back — detect restart via either:
+          //   1. version string changed (GIT_COMMIT is set), or
+          //   2. process start time changed (covers GIT_COMMIT="unknown" builds).
+          // Skip if neither changed — that's just a transient network blip.
           bgWasDownRef.current = false;
-          const prevVersion = bgVersionRef.current;
+          const prevVersion   = bgVersionRef.current;
+          const prevStartedAt = bgStartedAtRef.current;
 
-          if (
-            v &&
-            prevVersion &&
-            prevVersion !== 'unknown' &&
-            v !== 'unknown' &&
-            v !== prevVersion
-          ) {
-            bgVersionRef.current = v; // update baseline only when a real change is detected
-            showOverlay(prevVersion);
+          const versionChanged  = v && prevVersion && prevVersion !== 'unknown' && v !== 'unknown' && v !== prevVersion;
+          const restartDetected = startedAt && prevStartedAt && startedAt !== prevStartedAt;
+
+          if (versionChanged || restartDetected) {
+            bgVersionRef.current  = v;
+            bgStartedAtRef.current = startedAt;
+            showOverlay(prevVersion, { startedAt: prevStartedAt });
           }
-          // If no version change (transient error), keep bgVersionRef as-is so the
-          // baseline remains accurate for any subsequent recovery detection.
+          // If neither changed (transient error), keep baselines accurate.
           return;
         }
 
-        bgVersionRef.current = v;
+        bgVersionRef.current  = v;
+        bgStartedAtRef.current = startedAt;
       } catch {
         // Server is unreachable — flag it so we show the overlay when it returns
         bgWasDownRef.current = true;
@@ -250,9 +254,10 @@ export default function UpdateOverlay() {
       try {
         const res  = await fetch('/api/health', { cache: 'no-store' });
         const data = await res.json();
-        const newVersion = data?.version;
+        const newVersion   = data?.version;
+        const newStartedAt = data?.started_at ?? null;
 
-        // Phase 1: version string changed (GIT_COMMIT is set on the server)
+        // Phase 1a: version string changed (GIT_COMMIT is set on the server)
         if (
           newVersion &&
           startVersionRef.current &&
@@ -263,8 +268,18 @@ export default function UpdateOverlay() {
           return;
         }
 
+        // Phase 1b: process start time changed — detects restarts even when
+        // GIT_COMMIT is "unknown" on both old and new builds.
+        if (
+          newStartedAt &&
+          startStartedAtRef.current &&
+          newStartedAt !== startStartedAtRef.current
+        ) {
+          completeUpdate();
+          return;
+        }
+
         // Phase 2: server went offline then came back — container restarted.
-        // Reliable even when GIT_COMMIT is "unknown" on both old and new builds.
         if (serverWentDownRef.current) {
           completeUpdate();
           return;

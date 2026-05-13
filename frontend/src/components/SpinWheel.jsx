@@ -63,7 +63,8 @@ export default function SpinWheel({ availability, onSpinComplete }) {
     try {
       // Call API to get the spin result
       const data = await api('/api/spin/spin', { method: 'POST' });
-      const wonPoints = data.points_won ?? data.points ?? data.result ?? 5;
+      if (data.points_won == null) throw new Error('Spin response missing points_won');
+      const wonPoints = data.points_won;
 
       // Find all segment indices that match and pick one randomly
       const matching = SEGMENTS.reduce((acc, s, i) => {

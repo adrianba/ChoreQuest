@@ -1086,58 +1086,8 @@ async def verify_chore(
             reference_type="pet",
         ))
 
-    if kid.last_streak_date == today:
-        pass
-    elif kid.last_streak_date is not None:
-        gap = (today - kid.last_streak_date).days
-        if gap == 1:
-            kid.current_streak += 1
-            kid.last_streak_date = today
-        elif gap > 1:
-            # Check if all gap days were vacation days (streak shouldn't break)
-            from backend.routers.vacation import is_vacation_day
-            all_vacation = True
-            for offset in range(1, gap):
-                gap_day = kid.last_streak_date + timedelta(days=offset)
-                if not await is_vacation_day(db, gap_day, user_id=kid.id):
-                    all_vacation = False
-                    break
-            if all_vacation:
-                kid.current_streak += 1
-                kid.last_streak_date = today
-            else:
-                # Streak freeze: auto-use if available (1 per calendar month)
-                current_month = today.month + today.year * 12
-                freeze_month = kid.streak_freeze_month or 0
-                if kid.current_streak > 0 and freeze_month != current_month:
-                    # Use the freeze — preserve streak
-                    kid.streak_freezes_used = (kid.streak_freezes_used or 0) + 1
-                    kid.streak_freeze_month = current_month
-                    kid.current_streak += 1
-                    kid.last_streak_date = today
-                else:
-                    kid.current_streak = 1
-                    kid.last_streak_date = today
-        else:
-            kid.current_streak = 1
-            kid.last_streak_date = today
-    else:
-        kid.current_streak = 1
-        kid.last_streak_date = today
-
-    if kid.current_streak > kid.longest_streak:
-        kid.longest_streak = kid.current_streak
-
-    # Streak milestone notifications
-    _STREAK_MILESTONES = (7, 30, 100)
-    if kid.current_streak in _STREAK_MILESTONES:
-        db.add(Notification(
-            user_id=kid.id,
-            type=NotificationType.streak_milestone,
-            title=f"{kid.current_streak}-Day Streak!",
-            message=f"You've completed quests {kid.current_streak} days in a row! Keep it up!",
-            reference_type="streak",
-        ))
+    from backend.services.streak import update_streak
+    await update_streak(db, kid, today)
 
     await db.commit()
     await check_achievements(db, kid)

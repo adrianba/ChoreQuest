@@ -72,6 +72,7 @@ class NotificationType(str, enum.Enum):
     quest_feedback = "quest_feedback"
     bounty_claimed = "bounty_claimed"
     bounty_verified = "bounty_verified"
+    bounty_rejected = "bounty_rejected"
 
 
 class BountyClaimStatus(str, enum.Enum):
