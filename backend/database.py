@@ -63,6 +63,11 @@ async def init_db():
             except Exception:
                 pass  # column already exists
 
+        await conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_chore_assignments_user_date "
+            "ON chore_assignments(user_id, date)"
+        )
+
 
 async def get_db():
     async with async_session() as session:

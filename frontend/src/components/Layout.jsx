@@ -273,7 +273,7 @@ export default function Layout({ children }) {
                               setShowNotifs(false);
                               if (n.reference_type === 'kid_quest' && n.reference_id) {
                                 navigate(`/kids/${n.reference_id}`);
-                              } else if (n.type === 'chore_completed') {
+                              } else if (n.type === 'chore_submitted' || n.type === 'bounty_submitted') {
                                 navigate('/');
                               }
                               // Force a data refresh on the target page — handles the case

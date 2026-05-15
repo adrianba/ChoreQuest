@@ -294,6 +294,7 @@ class SpinAvailabilityResponse(BaseModel):
     can_spin: bool
     last_result: int | None = None
     reason: str | None = None
+    spin_credits: int = 0
 
 
 # Calendar
@@ -596,6 +597,8 @@ class BountyClaimResponse(BaseModel):
     id: int
     chore_id: int
     chore_title: str | None = None  # injected by router so Review Claims always has a title
+    chore_points: int | None = None
+    chore_requires_photo: bool = False
     user_id: int
     user_display_name: str | None = None
     status: BountyClaimStatus

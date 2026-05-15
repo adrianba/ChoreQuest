@@ -426,7 +426,7 @@ async def redeem_reward(
     for (pid,) in parent_result.all():
         db.add(Notification(
             user_id=pid,
-            type=NotificationType.reward_approved,
+            type=NotificationType.reward_redeemed,
             title="Reward Redeemed!",
             message=f"{current_user.display_name} redeemed '{reward.title}' for {reward.point_cost} XP",
             reference_type="redemption",

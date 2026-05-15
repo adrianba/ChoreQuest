@@ -83,7 +83,6 @@ function StatusBadge({ status }) {
     completed: 'bg-emerald/20 text-emerald border-emerald/40',
     verified: 'bg-accent/20 text-accent border-accent/40',
     skipped: 'bg-cream/10 text-muted border-border',
-    missed: 'bg-crimson/20 text-crimson border-crimson/40',
   };
   return (
     <span

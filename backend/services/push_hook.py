@@ -24,6 +24,7 @@ _loop = None
 _NOTIFICATION_URL_MAP = {
     "chore_assigned": "/chores",
     "chore_completed": "/",
+    "chore_submitted": "/",
     "chore_verified": "/",
     "achievement_unlocked": "/profile",
     "bonus_points": "/",
@@ -32,7 +33,9 @@ _NOTIFICATION_URL_MAP = {
     "trade_accepted": "/calendar",
     "trade_denied": "/calendar",
     "reward_approved": "/rewards",
+    "reward_redeemed": "/rewards",
     "reward_denied": "/rewards",
+    "bounty_submitted": "/",
     "announcement": "/party",
     "quest_feedback": "/",
 }

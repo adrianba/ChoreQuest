@@ -2,7 +2,8 @@ import random
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -31,22 +32,24 @@ SPIN_MAX = 25
 WHEEL_VALUES = [1, 5, 2, 10, 3, 15, 1, 25, 2, 5, 3, 10]
 
 
-async def _can_spin_today(db: AsyncSession, user: User) -> tuple[bool, int | None, str | None]:
+async def _can_spin_today(
+    db: AsyncSession, user: User
+) -> tuple[bool, int | None, str | None, int, list[date]]:
     """
     Determine if the user is eligible to spin today.
 
     Rules:
-    1. The user must have satisfied all of today's assigned chores
-       (or have no assignments today).
-    2. The user must not already have a spin result for today.
-    3. Resets at midnight — unfinished chores lock the spin until the next day.
+    1. A spin credit is earned for each day whose assignments are fully satisfied.
+    2. Spin credits can be used later (carry-over), so late approvals still count.
+    3. One spin result consumes one unspent credit day.
 
     Whether "satisfied" means parent-verified or just kid self-reported is
     controlled by the ``spin_requires_verification`` app setting (default: true).
     When true, only ``verified`` status counts — kids cannot game the wheel by
     tapping "Mark Done" on chores they haven't actually completed.
 
-    Returns (can_spin, last_result_points_or_none, reason_or_none).
+    Returns (can_spin, last_result_points_or_none, reason_or_none,
+             available_credit_count, available_credit_dates).
     """
     today = date.today()
 
@@ -61,18 +64,6 @@ async def _can_spin_today(db: AsyncSession, user: User) -> tuple[bool, int | Non
     last_spin = last_spin_query.scalar_one_or_none()
     if last_spin is not None:
         last_result = last_spin.points_won
-
-    # Check if already spun today
-    result = await db.execute(
-        select(SpinResult).where(
-            SpinResult.user_id == user.id,
-            SpinResult.spin_date == today,
-        )
-    )
-    today_spin = result.scalar_one_or_none()
-
-    if today_spin is not None:
-        return False, last_result, "You already spun the wheel today! Come back tomorrow."
 
     # Load the spin_requires_verification setting (default: true)
     setting_result = await db.execute(
@@ -90,42 +81,96 @@ async def _can_spin_today(db: AsyncSession, user: User) -> tuple[bool, int | Non
         else (AssignmentStatus.completed, AssignmentStatus.verified, AssignmentStatus.skipped)
     )
 
-    # Check today's chore assignments
+    # Load all assignments up through today. Fully-satisfied dates become spin credits.
+    # This intentionally has no lookback cutoff because spin credits do not expire.
+    # Query cost is controlled by idx_chore_assignments_user_date.
     result = await db.execute(
-        select(ChoreAssignment).where(
+        select(ChoreAssignment.date, ChoreAssignment.status)
+        .where(
             ChoreAssignment.user_id == user.id,
-            ChoreAssignment.date == today,
+            ChoreAssignment.date <= today,
         )
+        .order_by(ChoreAssignment.date.asc())
     )
-    today_assignments = result.scalars().all()
+    assignments_by_date: dict[date, list[AssignmentStatus]] = {}
+    for assignment_date, status in result.all():
+        assignments_by_date.setdefault(assignment_date, []).append(status)
 
-    # If no assignments today, eligible
-    if not today_assignments:
-        return True, last_result, None
+    eligible_credit_dates = [
+        assignment_date
+        for assignment_date, statuses in assignments_by_date.items()
+        if statuses and all(status in done_statuses for status in statuses)
+    ]
+    # Keep the existing "no assignments today" behavior: allow one same-day spin.
+    # We only add *today* (never past no-assignment days), so this preserves that
+    # behavior without creating backlogged credits that could be farmed on idle days.
+    if today not in assignments_by_date:
+        eligible_credit_dates.append(today)
 
-    all_done = all(a.status in done_statuses for a in today_assignments)
-    if not all_done:
+    used_dates_result = await db.execute(
+        select(SpinResult.spin_date)
+        .where(SpinResult.user_id == user.id)
+        .order_by(SpinResult.spin_date.asc())
+    )
+    used_credit_dates = set(used_dates_result.scalars().all())
+    available_credit_dates = [
+        credit_date for credit_date in eligible_credit_dates if credit_date not in used_credit_dates
+    ]
+
+    if available_credit_dates:
+        return True, last_result, None, len(available_credit_dates), available_credit_dates
+
+    if today in used_credit_dates:
+        earn_more_hint = (
+            "Complete and verify quests to earn more."
+            if requires_verification
+            else "Complete quests to earn more."
+        )
+        return (
+            False,
+            last_result,
+            f"You already used all available spin credits. {earn_more_hint}",
+            0,
+            [],
+        )
+
+    today_assignments = assignments_by_date.get(today, [])
+    all_done = all(status in done_statuses for status in today_assignments)
+    if today_assignments and not all_done:
         if requires_verification:
             # Distinguish between "not submitted yet" and "waiting on parent"
             awaiting_parent = sum(
-                1 for a in today_assignments
-                if a.status == AssignmentStatus.completed
+                1 for status in today_assignments if status == AssignmentStatus.completed
             )
             truly_pending = sum(
-                1 for a in today_assignments
-                if a.status not in done_statuses and a.status != AssignmentStatus.completed
+                1
+                for status in today_assignments
+                if status not in done_statuses and status != AssignmentStatus.completed
             )
             if truly_pending == 0 and awaiting_parent > 0:
                 return (
                     False,
                     last_result,
                     f"Almost there! Waiting for a parent to verify {awaiting_parent} quest(s).",
+                    0,
+                    [],
                 )
             pending = truly_pending
         else:
-            pending = sum(1 for a in today_assignments if a.status not in done_statuses)
-        return False, last_result, f"Complete all of today's quests to unlock the spin! {pending} remaining."
-    return True, last_result, None
+            pending = sum(1 for status in today_assignments if status not in done_statuses)
+        return (
+            False,
+            last_result,
+            f"Complete all of today's quests to unlock a spin credit! {pending} remaining.",
+            0,
+            [],
+        )
+    no_credit_msg = (
+        "No spin credits yet. Complete and verify quests to earn one."
+        if requires_verification
+        else "No spin credits yet. Complete quests to earn one."
+    )
+    return (False, last_result, no_credit_msg, 0, [])
 
 
 # ---------- GET /availability ----------
@@ -135,8 +180,13 @@ async def check_availability(
     user: User = Depends(get_current_user),
 ):
     """Check if the user can spin today."""
-    can_spin, last_result, reason = await _can_spin_today(db, user)
-    return SpinAvailabilityResponse(can_spin=can_spin, last_result=last_result, reason=reason)
+    can_spin, last_result, reason, spin_credits, _ = await _can_spin_today(db, user)
+    return SpinAvailabilityResponse(
+        can_spin=can_spin,
+        last_result=last_result,
+        reason=reason,
+        spin_credits=spin_credits,
+    )
 
 
 # ---------- POST /spin ----------
@@ -146,22 +196,25 @@ async def execute_spin(
     user: User = Depends(get_current_user),
 ):
     """Execute the daily spin. Validates eligibility, generates random XP, awards points."""
-    can_spin, _, reason = await _can_spin_today(db, user)
+    can_spin, _last_result, reason, _spin_credits, credit_dates = await _can_spin_today(db, user)
     if not can_spin:
         raise HTTPException(
             status_code=400,
             detail=reason or "Cannot spin today.",
         )
+    if not credit_dates:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to process spin right now. Please try again.",
+        )
 
     # Pick from the wheel segments so the frontend animation matches
     points_won = random.choice(WHEEL_VALUES)
-    today = date.today()
-
     # Create spin result
     spin_result = SpinResult(
         user_id=user.id,
         points_won=points_won,
-        spin_date=today,
+        spin_date=credit_dates[0],
     )
     db.add(spin_result)
 
@@ -183,7 +236,11 @@ async def execute_spin(
     # Award pet XP alongside user XP
     await award_pet_xp_db(db, user, points_won)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Spin already recorded for this credit. Please try again.")
     await db.refresh(spin_result)
 
     # Check achievements (non-blocking on failure)

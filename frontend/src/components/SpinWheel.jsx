@@ -20,6 +20,10 @@ const SEGMENTS = [
 
 const SEGMENT_ANGLE = 360 / SEGMENTS.length;
 
+function normalizeDegrees(value) {
+  return ((value % 360) + 360) % 360;
+}
+
 function polarToCartesian(cx, cy, r, angleDeg) {
   const rad = ((angleDeg - 90) * Math.PI) / 180;
   return {
@@ -48,8 +52,9 @@ export default function SpinWheel({ availability, onSpinComplete }) {
   const [error, setError] = useState(null);
   const hasSpunRef = useRef(false);
 
-  const canSpin = availability?.can_spin ?? true;
+  const canSpin = availability?.can_spin ?? false;
   const reason = availability?.reason ?? null;
+  const spinCredits = availability?.spin_credits ?? 0;
   const disabled = !canSpin;
 
   const handleSpin = useCallback(async () => {
@@ -62,7 +67,8 @@ export default function SpinWheel({ availability, onSpinComplete }) {
     try {
       // Call API to get the spin result
       const data = await api('/api/spin/spin', { method: 'POST' });
-      const wonPoints = data.points_won ?? data.points ?? data.result ?? 5;
+      if (data.points_won == null) throw new Error('Spin response missing points_won');
+      const wonPoints = data.points_won;
 
       // Find all segment indices that match and pick one randomly
       const matching = SEGMENTS.reduce((acc, s, i) => {
@@ -75,8 +81,10 @@ export default function SpinWheel({ availability, onSpinComplete }) {
 
       // Calculate target rotation
       const segmentCenter = targetIdx * SEGMENT_ANGLE + SEGMENT_ANGLE / 2;
+      const currentRotation = normalizeDegrees(rotation);
       const fullSpins = 5 + Math.floor(Math.random() * 3);
-      const targetRotation = rotation + fullSpins * 360 + (360 - segmentCenter);
+      const alignSegmentToPointer = normalizeDegrees(360 - (segmentCenter + currentRotation));
+      const targetRotation = rotation + fullSpins * 360 + alignSegmentToPointer;
 
       setRotation(targetRotation);
 
@@ -190,6 +198,20 @@ export default function SpinWheel({ availability, onSpinComplete }) {
       {/* Reason why spin is disabled */}
       {disabled && !spinning && reason && (
         <p className="text-gold text-sm text-center max-w-xs">{reason}</p>
+      )}
+
+      {/* After a spin: prompt if more credits remain */}
+      {result !== null && canSpin && !spinning && (
+        <p className="text-accent text-sm text-center font-medium">
+          You have {spinCredits} credit{spinCredits === 1 ? '' : 's'} left — spin again!
+        </p>
+      )}
+
+      {/* Before spinning: show credit count when more than 1 available */}
+      {result === null && spinCredits > 1 && (
+        <p className="text-muted text-xs text-center">
+          {spinCredits} spin credits ready
+        </p>
       )}
 
       {/* Error */}

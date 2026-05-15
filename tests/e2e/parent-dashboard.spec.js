@@ -205,6 +205,139 @@ test.describe('Parent — party and kid detail', () => {
   });
 });
 
+// ─── Bounty claim approvals on home screen ───────────────────────────────────
+
+/** Create a bounty, have the kid claim and complete it, return the claim. */
+async function createAndCompleteBountyClaim(parentToken, kidToken) {
+  const cats = await apiGet('/api/chores/categories', parentToken);
+  const categoryId = cats[0]?.id;
+
+  const choreRes = await fetch(`${BASE}/api/chores`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${parentToken}` },
+    body: JSON.stringify({
+      title: `Dashboard Bounty ${Date.now()}`,
+      points: 25,
+      difficulty: 'easy',
+      recurrence: 'once',
+      category_id: categoryId,
+    }),
+  });
+  if (!choreRes.ok) throw new Error(`Create chore failed ${choreRes.status}: ${await choreRes.text()}`);
+  const chore = await choreRes.json();
+
+  // Mark as bounty
+  const bountyRes = await fetch(`${BASE}/api/chores/${chore.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${parentToken}` },
+    body: JSON.stringify({ is_bounty: true }),
+  });
+  if (!bountyRes.ok) throw new Error(`Set is_bounty failed ${bountyRes.status}: ${await bountyRes.text()}`);
+
+  // Kid claims then completes
+  const claimResult = await apiPost(`/api/bounty/${chore.id}/claim`, kidToken);
+  if (claimResult.status >= 300) throw new Error(`Claim failed ${claimResult.status}: ${JSON.stringify(claimResult.body)}`);
+
+  const fd = new FormData();
+  const completeRes = await fetch(`${BASE}/api/bounty/${chore.id}/complete`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${kidToken}` },
+    body: fd,
+  });
+  if (!completeRes.ok) throw new Error(`Complete failed ${completeRes.status}: ${await completeRes.text()}`);
+
+  const claims = await apiGet('/api/bounty/claims', parentToken);
+  const claim = claims.find((c) => c.chore_id === chore.id);
+  if (!claim) throw new Error(`Claim for chore ${chore.id} not found in pending queue. Queue: ${JSON.stringify(claims.map((c) => c.chore_id))}`);
+  return claim;
+}
+
+test.describe('Parent Dashboard — bounty claim approvals', () => {
+  test('completed bounty claim appears in Pending Verifications with Bounty badge', async ({ loginAsParent: page }) => {
+    const { parentToken, kidToken } = loadTokens();
+    await createAndCompleteBountyClaim(parentToken, kidToken);
+
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.locator('text=Pending Verifications')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('text=Bounty').first()).toBeVisible({ timeout: 8_000 });
+  });
+
+  test('bounty claim card shows a date label (Today or Yesterday)', async ({ loginAsParent: page }) => {
+    const { parentToken, kidToken } = loadTokens();
+    await createAndCompleteBountyClaim(parentToken, kidToken);
+
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+
+    await expect(
+      page.locator('text=/Today|Yesterday/i').first()
+    ).toBeVisible({ timeout: 8_000 });
+  });
+
+  test('approving a bounty claim from home screen removes it from the queue (API)', async () => {
+    const { parentToken, kidToken, kidId } = loadTokens();
+    const claim = await createAndCompleteBountyClaim(parentToken, kidToken);
+    expect(claim, 'Claim not found in pending queue').toBeTruthy();
+
+    const before = await apiGet(`/api/points/${kidId}`, parentToken);
+
+    const verify = await apiPost(`/api/bounty/claims/${claim.id}/verify`, parentToken);
+    expect(verify.status, `verify failed: ${JSON.stringify(verify.body)}`).toBe(200);
+
+    // Claim no longer in pending queue
+    const pending = await apiGet('/api/bounty/claims', parentToken);
+    expect(pending.find((c) => c.id === claim.id)).toBeFalsy();
+
+    // XP awarded
+    const after = await apiGet(`/api/points/${kidId}`, parentToken);
+    expect(after.balance).toBeGreaterThan(before.balance);
+  });
+
+  test('approving a bounty claim via UI removes it from the pending list', async ({ loginAsParent: page }) => {
+    const { parentToken, kidToken } = loadTokens();
+    await createAndCompleteBountyClaim(parentToken, kidToken);
+
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+
+    // Count only bounty cards so other tests' pending chore approvals don't interfere
+    const bountyCards = page.locator('.game-panel', { has: page.locator('text=Bounty') });
+    await expect(bountyCards.first()).toBeVisible({ timeout: 10_000 });
+    const countBefore = await bountyCards.count();
+
+    const approveBtn = bountyCards.first().locator('[title="Approve"]');
+    await expect(approveBtn).toBeVisible();
+    await approveBtn.click();
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.locator('text=/error/i')).not.toBeVisible({ timeout: 3_000 }).catch(() => {});
+    // Poll until React re-renders the updated list
+    await expect.poll(() => bountyCards.count(), { timeout: 10_000 }).toBeLessThan(countBefore);
+  });
+
+  test('rejecting a bounty claim via UI removes it from the pending list', async ({ loginAsParent: page }) => {
+    const { parentToken, kidToken } = loadTokens();
+    await createAndCompleteBountyClaim(parentToken, kidToken);
+
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+
+    const bountyCards = page.locator('.game-panel', { has: page.locator('text=Bounty') });
+    await expect(bountyCards.first()).toBeVisible({ timeout: 10_000 });
+    const countBefore = await bountyCards.count();
+
+    const rejectBtn = bountyCards.first().locator('[title="Reject"]');
+    await expect(rejectBtn).toBeVisible();
+    await rejectBtn.click();
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.locator('text=/error/i')).not.toBeVisible({ timeout: 3_000 }).catch(() => {});
+    await expect.poll(() => bountyCards.count(), { timeout: 10_000 }).toBeLessThan(countBefore);
+  });
+});
+
 // ─── Shoutouts ────────────────────────────────────────────────────────────────
 
 test.describe('Parent — shoutouts', () => {

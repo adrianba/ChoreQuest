@@ -9,7 +9,7 @@ chore_assignments.
 from datetime import datetime, date, timezone, timedelta
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -36,11 +36,19 @@ _WS_BOUNTY_CHANGED = {"type": "data_changed", "data": {"entity": "bounty"}}
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _build_claim(claim: BountyBoardClaim, user: User | None = None, chore_title: str | None = None) -> BountyClaimResponse:
+def _build_claim(
+    claim: BountyBoardClaim,
+    user: User | None = None,
+    chore_title: str | None = None,
+    chore_points: int | None = None,
+    chore_requires_photo: bool = False,
+) -> BountyClaimResponse:
     return BountyClaimResponse(
         id=claim.id,
         chore_id=claim.chore_id,
         chore_title=chore_title,
+        chore_points=chore_points,
+        chore_requires_photo=chore_requires_photo,
         user_id=claim.user_id,
         user_display_name=user.display_name if user else None,
         status=claim.status,
@@ -64,12 +72,12 @@ def _build_bounty(
         is_default=cat.is_default,
     ) if cat else None
 
-    my_claim_resp = _build_claim(my_claim, chore_title=chore.title) if my_claim else None
+    my_claim_resp = _build_claim(my_claim, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo) if my_claim else None
 
     active_statuses = {BountyClaimStatus.claimed, BountyClaimStatus.completed, BountyClaimStatus.verified}
     claim_count = sum(1 for c, _ in all_claims if c.status in active_statuses)
 
-    claims_resp = [_build_claim(c, u, chore_title=chore.title) for c, u in all_claims]
+    claims_resp = [_build_claim(c, u, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo) for c, u in all_claims]
 
     return BountyResponse(
         id=chore.id,
@@ -158,10 +166,9 @@ async def list_bounties(
         my_claim = my_claim_by_chore.get(chore.id)
         all_claims = claims_by_chore.get(chore.id, [])
 
-        # Kids only see bounties they haven't abandoned or verified
-        if current_user.role == UserRole.kid:
-            if my_claim and my_claim.status == BountyClaimStatus.abandoned:
-                continue  # hide abandoned bounties from kid's view
+        # Kids can see all bounties including ones they abandoned,
+        # so they know they can re-claim them.
+        # Verified claims are hidden once the daily reset has cleared them anyway.
 
         bounties.append(_build_bounty(chore, my_claim, all_claims))
 
@@ -227,7 +234,7 @@ async def claim_bounty(
             await db.commit()
             await db.refresh(existing_claim)
             await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-            return _build_claim(existing_claim)
+            return _build_claim(existing_claim, current_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
         raise HTTPException(status_code=409, detail="You have already claimed this bounty")
 
     claim = BountyBoardClaim(
@@ -255,7 +262,7 @@ async def claim_bounty(
     await db.commit()
     await db.refresh(claim)
     await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-    return _build_claim(claim)
+    return _build_claim(claim, current_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +304,9 @@ async def complete_bounty(
         content = await file.read()
         if len(content) > 10 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="Photo must be under 10 MB")
+        allowed_mime = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+        if file.content_type not in allowed_mime:
+            raise HTTPException(status_code=400, detail="Invalid file type")
         ext = os.path.splitext(file.filename)[1].lower()
         if ext not in (".jpg", ".jpeg", ".png", ".gif", ".webp"):
             raise HTTPException(status_code=400, detail="Invalid file type")
@@ -320,7 +330,7 @@ async def complete_bounty(
     for parent in parent_result.scalars().all():
         db.add(Notification(
             user_id=parent.id,
-            type=NotificationType.chore_completed,
+            type=NotificationType.bounty_submitted,
             title="Bounty Ready to Verify!",
             message=f"{current_user.display_name} completed the bounty: {chore_title}",
             reference_type="bounty_claim",
@@ -330,7 +340,7 @@ async def complete_bounty(
     await db.commit()
     await db.refresh(claim)
     await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-    return _build_claim(claim)
+    return _build_claim(claim, current_user, chore_title=chore.title if chore else None, chore_points=chore.points if chore else None, chore_requires_photo=chore.requires_photo if chore else False)
 
 
 # ---------------------------------------------------------------------------
@@ -381,7 +391,15 @@ async def list_pending_claims(
         .where(BountyBoardClaim.status == BountyClaimStatus.completed)
         .order_by(BountyBoardClaim.completed_at.desc())
     )
-    return [_build_claim(claim, user, chore_title=chore.title if chore else None) for claim, user, chore in result.all()]
+    return [
+        _build_claim(
+            claim, user,
+            chore_title=chore.title if chore else None,
+            chore_points=chore.points if chore else None,
+            chore_requires_photo=chore.requires_photo if chore else False,
+        )
+        for claim, user, chore in result.all()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -395,14 +413,33 @@ async def verify_bounty_claim(
     parent: User = Depends(require_parent),
 ):
     """Parent approves a completed bounty claim — awards XP to the kid."""
-    claim_result = await db.execute(
-        select(BountyBoardClaim).where(BountyBoardClaim.id == claim_id)
+    # Atomically transition the claim from completed → verified.
+    # Using a conditional UPDATE means only one concurrent request can succeed;
+    # the second will see rowcount=0 and receive a 409 rather than double-awarding XP.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    result = await db.execute(
+        update(BountyBoardClaim)
+        .where(
+            BountyBoardClaim.id == claim_id,
+            BountyBoardClaim.status == BountyClaimStatus.completed,
+        )
+        .values(
+            status=BountyClaimStatus.verified,
+            verified_at=now,
+            verified_by=parent.id,
+        )
+        .execution_options(synchronize_session="fetch")
     )
-    claim = claim_result.scalar_one_or_none()
-    if not claim:
-        raise HTTPException(status_code=404, detail="Claim not found")
-    if claim.status != BountyClaimStatus.completed:
-        raise HTTPException(status_code=400, detail="Claim is not in completed state")
+    if result.rowcount == 0:
+        # Either not found or already verified/rejected by a concurrent request
+        check = await db.execute(select(BountyBoardClaim).where(BountyBoardClaim.id == claim_id))
+        existing = check.scalar_one_or_none()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Claim not found")
+        raise HTTPException(status_code=409, detail="Claim already processed. Please refresh.")
+
+    claim_result = await db.execute(select(BountyBoardClaim).where(BountyBoardClaim.id == claim_id))
+    claim = claim_result.scalar_one()
 
     # Load chore and kid
     chore_result = await db.execute(select(Chore).where(Chore.id == claim.chore_id))
@@ -415,26 +452,33 @@ async def verify_bounty_claim(
     if not kid:
         raise HTTPException(status_code=404, detail="Kid not found")
 
-    # Apply seasonal event multiplier
+    # Apply seasonal event multiplier — split into base + bonus transactions
+    # to match the audit-log structure used by regular chore verification.
     multiplier = await _get_active_event_multiplier(db)
     base_points = chore.points
-    total_awarded = base_points
-    if multiplier > 1.0:
-        total_awarded = int(base_points * multiplier)
+    bonus_points = int(base_points * multiplier) - base_points if multiplier > 1.0 else 0
+    total_awarded = base_points + bonus_points
 
-    # Award XP
     kid.points_balance += total_awarded
     kid.total_points_earned += total_awarded
 
-    tx = PointTransaction(
+    db.add(PointTransaction(
         user_id=kid.id,
-        amount=total_awarded,
+        amount=base_points,
         type=PointType.chore_complete,
         description=f"Bounty completed: {chore.title}",
         reference_id=claim.id,
         created_by=parent.id,
-    )
-    db.add(tx)
+    ))
+    if bonus_points > 0:
+        db.add(PointTransaction(
+            user_id=kid.id,
+            amount=bonus_points,
+            type=PointType.event_multiplier,
+            description=f"Event bonus ({multiplier}x): {chore.title}",
+            reference_id=claim.id,
+            created_by=parent.id,
+        ))
 
     # Pet XP
     from backend.services.pet_leveling import award_pet_xp_db
@@ -448,64 +492,12 @@ async def verify_bounty_claim(
             reference_type="pet",
         ))
 
-    # Update streak — same full logic as regular chore verification
-    # (vacation checks + freeze + milestone notifications)
+    # Update streak via shared service (same logic as regular chore verification)
+    from backend.services.streak import update_streak
     today = date.today()
-    if kid.last_streak_date == today:
-        pass  # already updated today
-    elif kid.last_streak_date is not None:
-        gap = (today - kid.last_streak_date).days
-        if gap == 1:
-            kid.current_streak += 1
-            kid.last_streak_date = today
-        elif gap > 1:
-            from backend.routers.vacation import is_vacation_day
-            all_vacation = True
-            for offset in range(1, gap):
-                gap_day = kid.last_streak_date + timedelta(days=offset)
-                if not await is_vacation_day(db, gap_day, user_id=kid.id):
-                    all_vacation = False
-                    break
-            if all_vacation:
-                kid.current_streak += 1
-                kid.last_streak_date = today
-            else:
-                current_month = today.month + today.year * 12
-                freeze_month = kid.streak_freeze_month or 0
-                if kid.current_streak > 0 and freeze_month != current_month:
-                    kid.streak_freezes_used = (kid.streak_freezes_used or 0) + 1
-                    kid.streak_freeze_month = current_month
-                    kid.current_streak += 1
-                    kid.last_streak_date = today
-                else:
-                    kid.current_streak = 1
-                    kid.last_streak_date = today
-        else:
-            kid.current_streak = 1
-            kid.last_streak_date = today
-    else:
-        kid.current_streak = 1
-        kid.last_streak_date = today
+    await update_streak(db, kid, today)
 
-    if kid.current_streak > kid.longest_streak:
-        kid.longest_streak = kid.current_streak
-
-    _STREAK_MILESTONES = (7, 30, 100)
-    if kid.current_streak in _STREAK_MILESTONES:
-        db.add(Notification(
-            user_id=kid.id,
-            type=NotificationType.streak_milestone,
-            title=f"{kid.current_streak}-Day Streak!",
-            message=f"You've completed quests {kid.current_streak} days in a row! Keep it up!",
-            reference_type="streak",
-        ))
-
-    # Finalise claim
-    claim.status = BountyClaimStatus.verified
-    claim.verified_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    claim.verified_by = parent.id
-
-    # Notify kid
+    # Notify kid (status/verified_at/verified_by already set by the atomic UPDATE above)
     db.add(Notification(
         user_id=kid.id,
         type=NotificationType.bounty_verified,
@@ -528,7 +520,7 @@ async def verify_bounty_claim(
     })
     await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
 
-    return _build_claim(claim)
+    return _build_claim(claim, kid, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
 
 
 # ---------------------------------------------------------------------------
@@ -551,35 +543,42 @@ async def reject_bounty_claim(
     if claim.status != BountyClaimStatus.completed:
         raise HTTPException(status_code=400, detail="Claim is not in completed state")
 
-    # Delete photo proof from disk if present
-    if claim.photo_proof_path:
-        from pathlib import Path
-        photo_path = Path("/app/data/uploads") / claim.photo_proof_path
-        try:
-            photo_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+    # Load kid and chore for response + notification
+    kid_result = await db.execute(select(User).where(User.id == claim.user_id))
+    kid = kid_result.scalar_one_or_none()
+    chore_result = await db.execute(select(Chore).where(Chore.id == claim.chore_id))
+    chore = chore_result.scalar_one_or_none()
+
+    photo_to_delete = claim.photo_proof_path
 
     claim.status = BountyClaimStatus.claimed
     claim.completed_at = None
     claim.photo_proof_path = None
 
-    # Notify kid
-    chore_result = await db.execute(select(Chore).where(Chore.id == claim.chore_id))
-    chore = chore_result.scalar_one_or_none()
+    # Notify kid with correct notification type
     db.add(Notification(
         user_id=claim.user_id,
-        type=NotificationType.chore_verified,
+        type=NotificationType.bounty_rejected,
         title="Bounty Needs Redo",
         message=f"'{chore.title if chore else 'Bounty'}' needs more work — give it another try!",
         reference_type="bounty_claim",
         reference_id=claim.id,
     ))
 
+    # Commit DB changes first; only delete the file after a successful commit
+    # so we never orphan a DB reference nor silently lose a file on rollback.
     await db.commit()
     await db.refresh(claim)
+
+    if photo_to_delete:
+        from pathlib import Path
+        try:
+            (Path("/app/data/uploads") / photo_to_delete).unlink(missing_ok=True)
+        except OSError:
+            pass
+
     await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-    return _build_claim(claim)
+    return _build_claim(claim, kid, chore_title=chore.title if chore else None, chore_points=chore.points if chore else None, chore_requires_photo=chore.requires_photo if chore else False)
 
 
 # ---------------------------------------------------------------------------
@@ -615,8 +614,33 @@ async def expire_stale_bounty_claims(db: AsyncSession) -> None:
     timestamp is before today, so kids can re-claim those bounties fresh
     each day (useful for bounties that are effectively daily tasks).
     In-progress claims (claimed/completed) are intentionally left alone.
+    Kids are notified so they know the board has refreshed.
     """
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+
+    # Fetch affected claims before deleting so we can notify the kids
+    stale_result = await db.execute(
+        select(BountyBoardClaim).where(
+            BountyBoardClaim.status == BountyClaimStatus.verified,
+            BountyBoardClaim.verified_at < today_start,
+        )
+    )
+    stale_claims = stale_result.scalars().all()
+
+    if stale_claims:
+        # Notify each unique kid whose claims are being reset
+        notified_kids: set[int] = set()
+        for claim in stale_claims:
+            if claim.user_id not in notified_kids:
+                notified_kids.add(claim.user_id)
+                db.add(Notification(
+                    user_id=claim.user_id,
+                    type=NotificationType.announcement,
+                    title="Bounty Board Refreshed!",
+                    message="The bounty board has reset — these quests are available to claim again!",
+                    reference_type="bounty",
+                ))
+
     await db.execute(
         delete(BountyBoardClaim).where(
             BountyBoardClaim.status == BountyClaimStatus.verified,
