@@ -1,5 +1,5 @@
 import random
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -52,6 +52,7 @@ async def _can_spin_today(
              available_credit_count, available_credit_dates).
     """
     today = date.today()
+    lookback_start = today - timedelta(days=3)
 
     # Get last spin result for display
     last_result: int | None = None
@@ -81,13 +82,15 @@ async def _can_spin_today(
         else (AssignmentStatus.completed, AssignmentStatus.verified, AssignmentStatus.skipped)
     )
 
-    # Load all assignments up through today. Fully-satisfied dates become spin credits.
-    # This intentionally has no lookback cutoff because spin credits do not expire.
-    # Query cost is controlled by idx_chore_assignments_user_date.
+    # Load assignments from the last 3 days through today.
+    # Fully-satisfied dates become available spins.
+    # A short lookback window prevents historical backlog from accumulating
+    # unlimited spins while still allowing late parent approvals to count.
     result = await db.execute(
         select(ChoreAssignment.date, ChoreAssignment.status)
         .where(
             ChoreAssignment.user_id == user.id,
+            ChoreAssignment.date >= lookback_start,
             ChoreAssignment.date <= today,
         )
         .order_by(ChoreAssignment.date.asc())
@@ -129,7 +132,7 @@ async def _can_spin_today(
         return (
             False,
             last_result,
-            f"You already used all available spin credits. {earn_more_hint}",
+            f"You already used all available spins. {earn_more_hint}",
             0,
             [],
         )
@@ -161,14 +164,14 @@ async def _can_spin_today(
         return (
             False,
             last_result,
-            f"Complete all of today's quests to unlock a spin credit! {pending} remaining.",
+            f"Complete all of today's quests to unlock a spin! {pending} remaining.",
             0,
             [],
         )
     no_credit_msg = (
-        "No spin credits yet. Complete and verify quests to earn one."
+        "No spins yet. Complete and verify quests to earn one."
         if requires_verification
-        else "No spin credits yet. Complete quests to earn one."
+        else "No spins yet. Complete quests to earn one."
     )
     return (False, last_result, no_credit_msg, 0, [])
 
@@ -240,7 +243,7 @@ async def execute_spin(
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=409, detail="Spin already recorded for this credit. Please try again.")
+        raise HTTPException(status_code=409, detail="Spin already recorded. Please try again.")
     await db.refresh(spin_result)
 
     # Check achievements (non-blocking on failure)

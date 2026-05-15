@@ -107,7 +107,7 @@ async def test_no_credit_when_today_still_pending(db):
     assert spin_credits == 0
     assert credit_dates == []
     assert reason is not None
-    assert "unlock a spin credit" in reason
+    assert "unlock a spin" in reason
 
 
 @pytest.mark.asyncio
