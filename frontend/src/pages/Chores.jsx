@@ -202,22 +202,32 @@ export default function Chores() {
     completeInFlight.current = true;
     setCompletingId(choreId);
     try {
+      let result;
       if (chore.requires_photo && photoFiles[choreId]) {
         const fd = new FormData();
         fd.append('file', photoFiles[choreId]);
-        await api(`/api/chores/${choreId}/complete`, { method: 'POST', body: fd });
+        result = await api(`/api/chores/${choreId}/complete`, { method: 'POST', body: fd });
       } else {
-        await api(`/api/chores/${choreId}/complete`, { method: 'POST' });
+        result = await api(`/api/chores/${choreId}/complete`, { method: 'POST' });
       }
       setPhotoFiles((prev) => { const next = { ...prev }; delete next[choreId]; return next; });
-      // Optimistically mark the assignment as completed so the card disappears immediately
+      // Use actual status from response so multi-completion chores (still pending) stay visible
+      const newStatus = result?.status || 'completed';
       setTodayAssignments((prev) =>
         prev.map((a) => {
           const cid = a.chore_id || a.chore?.id;
-          return cid === choreId ? { ...a, status: 'completed' } : a;
+          return cid === choreId
+            ? { ...a, status: newStatus, completion_count: result?.completion_count || 1 }
+            : a;
         })
       );
-      showToast('Quest complete! XP awarded! 🎉', 'success');
+      const maxComp = chore.max_completions_per_day || 1;
+      const newCount = result?.completion_count || 1;
+      if (maxComp > 1 && newCount < maxComp) {
+        showToast(`Done ${newCount}/${maxComp} times today! Keep going! 💪`, 'success');
+      } else {
+        showToast('Quest complete! Awaiting XP approval! 🎉', 'success');
+      }
       await fetchAll();
     } catch (err) {
       showToast(err.message || 'Failed to complete quest', 'error');
@@ -228,10 +238,14 @@ export default function Chores() {
   };
 
   const assignmentStatusMap = {};
+  const completionCountMap = {};
   if (isKid) {
     for (const a of todayAssignments) {
       const cid = a.chore_id || a.chore?.id;
-      if (cid) assignmentStatusMap[cid] = a.status;
+      if (cid) {
+        assignmentStatusMap[cid] = a.status;
+        completionCountMap[cid] = a.completion_count || 0;
+      }
     }
   }
 
@@ -446,6 +460,8 @@ export default function Chores() {
               isKid &&
               chore.rotation_summary &&
               chore.rotation_summary.current_kid_id !== user?.id;
+            const maxCompletions = chore.max_completions_per_day || 1;
+            const todayCompletionCount = completionCountMap[chore.id] || 0;
 
             return (
               <div
@@ -541,6 +557,12 @@ export default function Chores() {
                       Photo
                     </span>
                   )}
+                  {(chore.max_completions_per_day || 1) > 1 && (
+                    <span className="flex items-center gap-1 text-accent text-xs border border-accent/30 rounded px-1.5 py-0.5">
+                      <RefreshCw size={10} />
+                      ×{chore.max_completions_per_day}/day
+                    </span>
+                  )}
                   {isParent && assignCount > 0 && (
                     <span className="flex items-center gap-1 text-emerald text-xs font-medium">
                       <Users size={11} />
@@ -632,6 +654,11 @@ export default function Chores() {
                         <>
                           <Loader2 size={12} className="animate-spin" />
                           Completing...
+                        </>
+                      ) : maxCompletions > 1 ? (
+                        <>
+                          <CheckCircle2 size={12} />
+                          Complete ({todayCompletionCount + 1}/{maxCompletions})
                         </>
                       ) : (
                         <>

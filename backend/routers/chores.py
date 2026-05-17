@@ -263,6 +263,7 @@ async def create_chore(
         custom_days=body.custom_days,
         requires_photo=body.requires_photo,
         is_bounty=body.is_bounty,
+        max_completions_per_day=body.max_completions_per_day,
         created_by=user.id,
     )
     db.add(chore)
@@ -378,6 +379,7 @@ async def get_chore(
                 "completed_at": utc_iso(a.completed_at),
                 "verified_at": utc_iso(a.verified_at),
                 "photo_proof_path": a.photo_proof_path,
+                "completion_count": a.completion_count or 0,
             }
             for a in kid_assignments
         ]
@@ -872,7 +874,12 @@ async def complete_chore(
         grace_days = 1
     earliest = today - timedelta(days=grace_days)
 
-    # Guard: prevent completing today's assignment twice — prevents double XP.
+    # Guard: prevent completing today's assignment beyond max_completions_per_day.
+    # For chores with max_completions_per_day > 1, intermediate completions reset
+    # the assignment status to 'pending' so kids can complete again. Only when
+    # completion_count reaches the max does the status become 'completed'. This
+    # guard therefore correctly blocks double-XP by checking for completed/verified
+    # status, which is only set once all required completions are done.
     # Only checks today so that yesterday's verified assignment doesn't block
     # completing a fresh assignment for today (grace period cross-day case).
     already_done = await db.execute(
@@ -910,6 +917,7 @@ async def complete_chore(
         )
 
     chore = assignment.chore
+    max_completions = chore.max_completions_per_day or 1
 
     # Determine if photo is required: per-kid rule overrides chore-level
     requires_photo = chore.requires_photo
@@ -948,46 +956,58 @@ async def complete_chore(
             f.write(contents)
         assignment.photo_proof_path = filename
 
-    assignment.status = AssignmentStatus.completed
-    assignment.completed_at = now
+    current_count = assignment.completion_count or 0
+    new_count = min(max_completions, current_count + 1)
+    assignment.completion_count = new_count
     assignment.updated_at = now
 
+    if new_count < max_completions:
+        # More completions still allowed today — stay pending so kid can complete again
+        assignment.status = AssignmentStatus.pending
+    else:
+        # All required completions done — ready for parent verification
+        assignment.status = AssignmentStatus.completed
+        assignment.completed_at = now
+
     await db.commit()
 
-    # Notify parents for approval
-    parent_result = await db.execute(
-        select(User.id).where(
-            User.role.in_([UserRole.parent, UserRole.admin]),
-            User.is_active == True,
+    # Only notify parents once all completions are done (when status reaches completed)
+    if assignment.status == AssignmentStatus.completed:
+        parent_result = await db.execute(
+            select(User.id).where(
+                User.role.in_([UserRole.parent, UserRole.admin]),
+                User.is_active == True,
+            )
         )
-    )
-    parent_ids = [row[0] for row in parent_result.all()]
+        parent_ids = [row[0] for row in parent_result.all()]
 
-    await ws_manager.send_to_parents(
-        {
-            "type": "chore_completed",
-            "data": {
-                "chore_id": chore.id,
-                "chore_title": chore.title,
-                "user_id": user.id,
-                "user_display_name": user.display_name,
-                "points": chore.points,
-                "assignment_id": assignment.id,
+        total_xp = chore.points * new_count
+        count_label = f" ({new_count}×)" if max_completions > 1 else ""
+        await ws_manager.send_to_parents(
+            {
+                "type": "chore_completed",
+                "data": {
+                    "chore_id": chore.id,
+                    "chore_title": chore.title,
+                    "user_id": user.id,
+                    "user_display_name": user.display_name,
+                    "points": total_xp,
+                    "assignment_id": assignment.id,
+                },
             },
-        },
-        parent_ids,
-    )
+            parent_ids,
+        )
 
-    for pid in parent_ids:
-        db.add(Notification(
-            user_id=pid,
-            type=NotificationType.chore_submitted,
-            title="Quest Awaiting Approval",
-            message=f"{user.display_name} completed '{chore.title}' - tap to approve (+{chore.points} XP)",
-            reference_type="kid_quest",
-            reference_id=user.id,
-        ))
-    await db.commit()
+        for pid in parent_ids:
+            db.add(Notification(
+                user_id=pid,
+                type=NotificationType.chore_submitted,
+                title="Quest Awaiting Approval",
+                message=f"{user.display_name} completed '{chore.title}'{count_label} - tap to approve (+{total_xp} XP)",
+                reference_type="kid_quest",
+                reference_id=user.id,
+            ))
+        await db.commit()
 
     assignment = await _reload_assignment_with_relations(db, assignment.id)
     return AssignmentResponse.model_validate(assignment)
@@ -1025,7 +1045,8 @@ async def verify_chore(
         )
 
     chore = assignment.chore
-    base_points = chore.points
+    # Scale base points by number of completions (multi-completion chores earn XP per completion)
+    base_points = chore.points * max(1, assignment.completion_count or 1)
 
     assignment.status = AssignmentStatus.verified
     assignment.verified_at = now
@@ -1173,7 +1194,12 @@ async def parent_verify_assignment(
         )
 
     chore = assignment.chore
-    base_points = chore.points
+    # Direct parent verification can hit legacy rows, and pending assignments
+    # naturally start at completion_count=0 before any kid submission.
+    # Ensure at least one completion is counted for this verified attempt.
+    assignment.completion_count = max(1, assignment.completion_count or 0)
+    # Scale base points by number of completions (multi-completion chores earn XP per completion).
+    base_points = chore.points * assignment.completion_count
 
     assignment.status = AssignmentStatus.verified
     assignment.completed_at = now
@@ -1412,6 +1438,7 @@ async def uncomplete_chore(
     assignment.completed_at = None
     assignment.verified_at = None
     assignment.verified_by = None
+    assignment.completion_count = 0
     assignment.updated_at = now
 
     await db.commit()

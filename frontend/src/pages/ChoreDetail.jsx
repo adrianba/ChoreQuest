@@ -175,16 +175,23 @@ export default function ChoreDetail() {
     actionInFlight.current = true;
     setActionLoading('complete');
     try {
+      let result;
       if (chore?.requires_photo && photoFile) {
         const fd = new FormData();
         fd.append('file', photoFile);
-        await api(`/api/chores/${id}/complete`, { method: 'POST', body: fd });
+        result = await api(`/api/chores/${id}/complete`, { method: 'POST', body: fd });
       } else {
-        await api(`/api/chores/${id}/complete`, { method: 'POST' });
+        result = await api(`/api/chores/${id}/complete`, { method: 'POST' });
       }
       setPhotoFile(null);
       if (photoInputRef.current) photoInputRef.current.value = '';
-      showToast('Quest completed! XP awarded! 🎉', 'success');
+      const maxComp = chore?.max_completions_per_day || 1;
+      const newCount = result?.completion_count || 1;
+      if (maxComp > 1 && newCount < maxComp) {
+        showToast(`Done ${newCount}/${maxComp} times today! Keep going! 💪`, 'success');
+      } else {
+        showToast('Quest completed! Awaiting XP approval! 🎉', 'success');
+      }
       await fetchChore();
     } catch (err) {
       showToast(err.message || 'Failed to complete the quest.', 'error');
@@ -382,6 +389,10 @@ export default function ChoreDetail() {
     todayAssignment && (todayAssignment.status === 'pending' || todayAssignment.status === 'assigned');
   const recentAssignments = assignments.slice(0, 10);
 
+  const maxCompletions = chore.max_completions_per_day || 1;
+  const completionCount = todayAssignment?.completion_count || 0;
+  const isMultiCompletion = maxCompletions > 1;
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       {/* Back button */}
@@ -480,6 +491,17 @@ export default function ChoreDetail() {
           </div>
         )}
 
+        {/* Multi-completion indicator */}
+        {isMultiCompletion && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded bg-accent/10 border border-accent/30">
+            <RefreshCw size={16} className="text-accent" />
+            <span className="text-accent text-xs">
+              Can be completed <span className="font-semibold">{maxCompletions}× per day</span>
+              {' '}— earns up to <span className="font-semibold">{chore.points * maxCompletions} XP</span> total
+            </span>
+          </div>
+        )}
+
         {/* Bounty Board toggle (parent only) */}
         {isParent && (
           <div className="flex items-center justify-between px-3 py-2 rounded bg-surface-raised border border-border">
@@ -558,6 +580,11 @@ export default function ChoreDetail() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-cream text-sm font-semibold mb-1">Today's Quest</p>
+              {isMultiCompletion && (
+                <p className="text-muted text-xs">
+                  {completionCount}/{maxCompletions} completions done today
+                </p>
+              )}
             </div>
             <div className="flex flex-col items-end gap-2">
               {chore.requires_photo && (
@@ -581,7 +608,11 @@ export default function ChoreDetail() {
                 } ${chore.requires_photo && !photoFile ? 'opacity-40 cursor-not-allowed' : ''}`}
               >
                 <CheckCircle2 size={16} />
-                {actionLoading === 'complete' ? 'Completing...' : 'Complete Quest'}
+                {actionLoading === 'complete'
+                  ? 'Completing...'
+                  : isMultiCompletion
+                  ? `Complete (${completionCount + 1}/${maxCompletions})`
+                  : 'Complete Quest'}
               </button>
             </div>
           </div>

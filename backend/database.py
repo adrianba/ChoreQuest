@@ -54,6 +54,10 @@ async def init_db():
             ("chore_rotations", "inverse_of_chore_id", "INTEGER REFERENCES chores(id)"),
             # Per-kid vacation: NULL = family-wide, set = individual kid only
             ("vacation_periods", "user_id", "INTEGER REFERENCES users(id)"),
+            # Multiple completions per day support
+            ("chores", "max_completions_per_day", "INTEGER DEFAULT 1"),
+            ("chore_assignments", "completion_count", "INTEGER DEFAULT 0"),
+            ("bounty_board_claims", "completion_count", "INTEGER DEFAULT 0"),
         ]
         for table, col, typedef in _migrations:
             try:

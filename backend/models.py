@@ -176,6 +176,7 @@ class Chore(Base):
     requires_photo: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_bounty: Mapped[bool] = mapped_column(Boolean, default=False)
+    max_completions_per_day: Mapped[int] = mapped_column(Integer, default=1)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -198,6 +199,7 @@ class ChoreAssignment(Base):
     verified_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     photo_proof_path: Mapped[str | None] = mapped_column(String, nullable=True)
     feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completion_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -555,6 +557,7 @@ class BountyBoardClaim(Base):
     )
     photo_proof_path: Mapped[str | None] = mapped_column(String, nullable=True)
     kid_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completion_count: Mapped[int] = mapped_column(Integer, default=0)
     claimed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

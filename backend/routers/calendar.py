@@ -126,6 +126,7 @@ def _build_assignment_entry(
         "verified_by": a.verified_by,
         "photo_proof_path": a.photo_proof_path,
         "requires_photo": effective_requires_photo,
+        "completion_count": a.completion_count or 0,
     }
     if a.chore:
         entry["chore"] = {
@@ -149,6 +150,7 @@ def _build_assignment_entry(
             "is_active": a.chore.is_active,
             "created_by": a.chore.created_by,
             "created_at": utc_iso(a.chore.created_at),
+            "max_completions_per_day": a.chore.max_completions_per_day or 1,
         }
     if a.user:
         entry["user"] = {

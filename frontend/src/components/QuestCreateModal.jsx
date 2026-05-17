@@ -27,6 +27,7 @@ const emptyForm = {
   points: 10,
   difficulty: 'easy',
   category_id: '',
+  max_completions_per_day: 1,
 };
 
 export default function QuestCreateModal({
@@ -53,6 +54,7 @@ export default function QuestCreateModal({
           points: editingChore.points || 10,
           difficulty: editingChore.difficulty || 'easy',
           category_id: editingChore.category_id ? String(editingChore.category_id) : '',
+          max_completions_per_day: editingChore.max_completions_per_day || 1,
         });
       } else {
         setForm({ ...emptyForm });
@@ -124,6 +126,7 @@ export default function QuestCreateModal({
       recurrence: 'once',
       requires_photo: false,
       assigned_user_ids: [],
+      max_completions_per_day: Number(form.max_completions_per_day) || 1,
     };
 
     try {
@@ -318,6 +321,26 @@ export default function QuestCreateModal({
               </option>
             ))}
           </select>
+        </div>
+
+        {/* Times per day */}
+        <div>
+          <label className="block text-cream text-sm font-medium mb-1 tracking-wide">
+            Times per Day
+          </label>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={form.max_completions_per_day}
+            onChange={(e) => updateForm('max_completions_per_day', Math.max(1, parseInt(e.target.value) || 1))}
+            className="field-input w-24"
+          />
+          {Number(form.max_completions_per_day) > 1 && (
+            <p className="text-muted text-xs mt-1">
+              Kid can complete this quest {form.max_completions_per_day}× per day and earn {(Number(form.points) * Number(form.max_completions_per_day))} XP total.
+            </p>
+          )}
         </div>
       </div>
     </Modal>

@@ -101,6 +101,7 @@ class ChoreCreate(BaseModel):
     custom_days: list[int] | None = None
     requires_photo: bool = False
     is_bounty: bool = False
+    max_completions_per_day: int = Field(default=1, ge=1)
     assigned_user_ids: list[int] = []
 
 
@@ -115,6 +116,7 @@ class ChoreUpdate(BaseModel):
     custom_days: list[int] | None = None
     requires_photo: bool | None = None
     is_bounty: bool | None = None
+    max_completions_per_day: int | None = Field(default=None, ge=1)
     assigned_user_ids: list[int] | None = None
 
 
@@ -142,6 +144,7 @@ class ChoreResponse(BaseModel):
     requires_photo: bool
     is_active: bool
     is_bounty: bool = False
+    max_completions_per_day: int = 1
     created_by: int
     created_at: UtcDt
     rotation_summary: RotationSummary | None = None
@@ -165,6 +168,7 @@ class AssignmentResponse(BaseModel):
     verified_by: int | None
     photo_proof_path: str | None
     feedback: str | None = None
+    completion_count: int = 0
     chore: ChoreResponse | None = None
     user: UserResponse | None = None
 
@@ -604,6 +608,7 @@ class BountyClaimResponse(BaseModel):
     status: BountyClaimStatus
     photo_proof_path: str | None
     kid_note: str | None = None
+    completion_count: int = 0
     claimed_at: UtcDt
     completed_at: UtcDt | None
     verified_at: UtcDt | None
@@ -623,6 +628,7 @@ class BountyResponse(BaseModel):
     category: CategoryResponse | None = None
     requires_photo: bool
     is_active: bool
+    max_completions_per_day: int = 1
     # Enriched at query time
     my_claim: BountyClaimResponse | None = None
     claim_count: int = 0
