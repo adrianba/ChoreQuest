@@ -107,7 +107,30 @@ async def test_no_credit_when_today_still_pending(db):
     assert spin_credits == 0
     assert credit_dates == []
     assert reason is not None
-    assert "unlock a spin credit" in reason
+    assert "unlock a spin" in reason
+
+
+@pytest.mark.asyncio
+async def test_assignment_older_than_lookback_does_not_grant_spin(db):
+    today = date.today()
+    before_lookback = today - timedelta(days=4)
+
+    category = await make_category(db)
+    parent = await make_user(db, "spin_parent_lookback", role=UserRole.parent)
+    kid = await make_user(db, "spin_kid_lookback")
+    chore = await make_chore(db, parent.id, category.id)
+
+    await _add_assignment(db, chore.id, kid.id, before_lookback, AssignmentStatus.verified)
+    await _add_assignment(db, chore.id, kid.id, today, AssignmentStatus.pending)
+    await db.commit()
+
+    can_spin, _, reason, spin_credits, credit_dates = await _can_spin_today(db, kid)
+
+    assert can_spin is False
+    assert spin_credits == 0
+    assert credit_dates == []
+    assert reason is not None
+    assert "unlock a spin" in reason
 
 
 @pytest.mark.asyncio
