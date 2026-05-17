@@ -855,12 +855,24 @@ async def delete_assignment_rule(
 @router.post("/{chore_id}/complete", response_model=AssignmentResponse)
 async def complete_chore(
     chore_id: int,
+    kid_id: int | None = Query(None, description="Complete on behalf of this kid (admin/parent only)"),
     file: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     today = date.today()
     now = datetime.now(timezone.utc)
+
+    # Determine target user: parents/admins may act on behalf of a kid
+    target_user = user
+    if kid_id is not None and user.role in (UserRole.parent, UserRole.admin):
+        kid_result = await db.execute(
+            select(User).where(User.id == kid_id, User.role == UserRole.kid, User.is_active == True)
+        )
+        kid = kid_result.scalar_one_or_none()
+        if kid is None:
+            raise HTTPException(status_code=400, detail="Invalid kid_id")
+        target_user = kid
 
     grace_result = await db.execute(
         select(AppSetting).where(AppSetting.key == "grace_period_days")
@@ -878,7 +890,7 @@ async def complete_chore(
     already_done = await db.execute(
         select(ChoreAssignment).where(
             ChoreAssignment.chore_id == chore_id,
-            ChoreAssignment.user_id == user.id,
+            ChoreAssignment.user_id == target_user.id,
             ChoreAssignment.date == today,
             ChoreAssignment.status.in_([AssignmentStatus.completed, AssignmentStatus.verified]),
         )
@@ -893,7 +905,7 @@ async def complete_chore(
         select(ChoreAssignment)
         .where(
             ChoreAssignment.chore_id == chore_id,
-            ChoreAssignment.user_id == user.id,
+            ChoreAssignment.user_id == target_user.id,
             ChoreAssignment.date >= earliest,
             ChoreAssignment.date <= today,
             ChoreAssignment.status == AssignmentStatus.pending,
@@ -916,7 +928,7 @@ async def complete_chore(
     rule_result = await db.execute(
         select(ChoreAssignmentRule).where(
             ChoreAssignmentRule.chore_id == chore_id,
-            ChoreAssignmentRule.user_id == user.id,
+            ChoreAssignmentRule.user_id == target_user.id,
             ChoreAssignmentRule.is_active == True,
         )
     )
@@ -969,8 +981,8 @@ async def complete_chore(
             "data": {
                 "chore_id": chore.id,
                 "chore_title": chore.title,
-                "user_id": user.id,
-                "user_display_name": user.display_name,
+                "user_id": target_user.id,
+                "user_display_name": target_user.display_name,
                 "points": chore.points,
                 "assignment_id": assignment.id,
             },
@@ -983,9 +995,9 @@ async def complete_chore(
             user_id=pid,
             type=NotificationType.chore_submitted,
             title="Quest Awaiting Approval",
-            message=f"{user.display_name} completed '{chore.title}' - tap to approve (+{chore.points} XP)",
+            message=f"{target_user.display_name} completed '{chore.title}' - tap to approve (+{chore.points} XP)",
             reference_type="kid_quest",
-            reference_id=user.id,
+            reference_id=target_user.id,
         ))
     await db.commit()
 
