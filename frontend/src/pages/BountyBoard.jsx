@@ -395,6 +395,10 @@ export default function BountyBoard() {
 
 function BountyCard({ bounty, isParent, actionLoading, onClaim, onComplete, onOpenNote, onAbandon, onNavigate, noteTarget, noteText, setNoteText, setNoteTarget }) {
   const claim = bounty.my_claim;
+  const completionCount = claim?.completion_count || 0;
+  const maxCompletions = bounty.max_completions_per_day || 1;
+  const isMultiNoPhoto = !bounty.requires_photo && maxCompletions > 1;
+  const nextStep = Math.min(maxCompletions, completionCount + 1);
   const statusCfg = claim ? (STATUS_CONFIG[claim.status] || STATUS_CONFIG.claimed) : null;
   const StatusIcon = statusCfg?.icon;
   const isBusy = (key) => actionLoading === key;
@@ -423,6 +427,9 @@ function BountyCard({ bounty, isParent, actionLoading, onClaim, onComplete, onOp
 
           {bounty.description && (
             <p className="text-muted text-xs mt-0.5 line-clamp-2">{bounty.description}</p>
+          )}
+          {isMultiNoPhoto && (
+            <p className="text-muted text-xs mt-1">Done {completionCount}/{maxCompletions} today</p>
           )}
 
           <div className="flex items-center gap-3 mt-2">
@@ -507,7 +514,7 @@ function BountyCard({ bounty, isParent, actionLoading, onClaim, onComplete, onOp
                     className="game-btn game-btn-blue !py-1.5 !px-4 !text-xs flex items-center gap-1.5"
                   >
                     {isBusy(`complete-${bounty.id}`) ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
-                    Turn In
+                    {isMultiNoPhoto ? `Complete (${nextStep}/${maxCompletions})` : 'Turn In'}
                   </button>
                   <button
                     onClick={() => onAbandon(bounty.id)}

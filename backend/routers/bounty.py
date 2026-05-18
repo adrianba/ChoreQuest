@@ -54,6 +54,7 @@ def _build_claim(
         status=claim.status,
         photo_proof_path=claim.photo_proof_path,
         kid_note=claim.kid_note,
+        completion_count=claim.completion_count or 0,
         claimed_at=claim.claimed_at,
         completed_at=claim.completed_at,
         verified_at=claim.verified_at,
@@ -90,6 +91,7 @@ def _build_bounty(
         category=cat_resp,
         requires_photo=chore.requires_photo,
         is_active=chore.is_active,
+        max_completions_per_day=chore.max_completions_per_day or 1,
         my_claim=my_claim_resp,
         claim_count=claim_count,
         claims=claims_resp,
@@ -224,13 +226,37 @@ async def claim_bounty(
     existing_claim = existing_claim_result.scalar_one_or_none()
 
     if existing_claim:
+        max_completions = chore.max_completions_per_day or 1
+        completion_count = existing_claim.completion_count or 0
+        if existing_claim.status == BountyClaimStatus.verified:
+            # Backwards compatibility for older rows created before completion_count existed.
+            completion_count = max(1, completion_count)
+            existing_claim.completion_count = completion_count
+        if completion_count >= max_completions:
+            raise HTTPException(status_code=409, detail="Daily completion limit reached for this bounty")
+
         if existing_claim.status == BountyClaimStatus.abandoned:
             # Re-activate abandoned claim
             existing_claim.status = BountyClaimStatus.claimed
             existing_claim.claimed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             existing_claim.completed_at = None
             existing_claim.verified_at = None
+            existing_claim.verified_by = None
             existing_claim.photo_proof_path = None
+            existing_claim.kid_note = None
+            await db.commit()
+            await db.refresh(existing_claim)
+            await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
+            return _build_claim(existing_claim, current_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
+        if existing_claim.status == BountyClaimStatus.verified:
+            # Allow same-day re-claims for multi-completion bounties.
+            existing_claim.status = BountyClaimStatus.claimed
+            existing_claim.claimed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            existing_claim.completed_at = None
+            existing_claim.verified_at = None
+            existing_claim.verified_by = None
+            existing_claim.photo_proof_path = None
+            existing_claim.kid_note = None
             await db.commit()
             await db.refresh(existing_claim)
             await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
@@ -506,6 +532,10 @@ async def verify_bounty_claim(
         reference_type="bounty_claim",
         reference_id=claim.id,
     ))
+
+    max_completions = chore.max_completions_per_day or 1
+    current_count = claim.completion_count or 0
+    claim.completion_count = min(max_completions, current_count + 1)
 
     await db.commit()
     await db.refresh(claim)

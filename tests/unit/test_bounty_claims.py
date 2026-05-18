@@ -43,6 +43,7 @@ async def make_bounty_chore(
     *,
     points: int = 20,
     requires_photo: bool = False,
+    max_completions_per_day: int = 1,
 ) -> Chore:
     chore = Chore(
         title="Test Bounty",
@@ -54,6 +55,7 @@ async def make_bounty_chore(
         is_bounty=True,
         is_active=True,
         requires_photo=requires_photo,
+        max_completions_per_day=max_completions_per_day,
         created_at=datetime(2024, 1, 1),
     )
     db.add(chore)
@@ -100,6 +102,58 @@ async def test_claim_bounty_prevents_double_claim(db):
         with pytest.raises(HTTPException) as exc_info:
             await claim_bounty(chore_id=chore.id, db=db, current_user=kid)
     assert exc_info.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_claim_bounty_allows_reclaim_when_under_daily_max(db):
+    category = await make_category(db)
+    parent = await make_user(db, "bounty_parent_2b", role=UserRole.parent)
+    kid = await make_user(db, "bounty_kid_2b")
+    chore = await make_bounty_chore(db, parent.id, category.id, max_completions_per_day=3)
+    claim = BountyBoardClaim(
+        chore_id=chore.id,
+        user_id=kid.id,
+        status=BountyClaimStatus.verified,
+        completion_count=1,
+        claimed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        verified_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(claim)
+    await db.commit()
+
+    with patch("backend.routers.bounty.ws_manager") as mock_ws:
+        mock_ws.broadcast = AsyncMock()
+        result = await claim_bounty(chore_id=chore.id, db=db, current_user=kid)
+
+    assert result.status == BountyClaimStatus.claimed
+    assert result.completion_count == 1
+
+
+@pytest.mark.asyncio
+async def test_claim_bounty_blocks_reclaim_at_daily_max(db):
+    from fastapi import HTTPException
+    category = await make_category(db)
+    parent = await make_user(db, "bounty_parent_2c", role=UserRole.parent)
+    kid = await make_user(db, "bounty_kid_2c")
+    chore = await make_bounty_chore(db, parent.id, category.id, max_completions_per_day=2)
+    claim = BountyBoardClaim(
+        chore_id=chore.id,
+        user_id=kid.id,
+        status=BountyClaimStatus.verified,
+        completion_count=2,
+        claimed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        verified_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(claim)
+    await db.commit()
+
+    with patch("backend.routers.bounty.ws_manager") as mock_ws:
+        mock_ws.broadcast = AsyncMock()
+        with pytest.raises(HTTPException) as exc_info:
+            await claim_bounty(chore_id=chore.id, db=db, current_user=kid)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "Daily completion limit reached for this bounty"
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +325,34 @@ async def test_verify_bounty_claim_awards_xp(db):
     assert result.status == BountyClaimStatus.verified
     assert kid.points_balance == 25
     assert kid.total_points_earned == 25
+
+
+@pytest.mark.asyncio
+async def test_verify_bounty_claim_increments_completion_count(db):
+    category = await make_category(db)
+    parent = await make_user(db, "bounty_parent_3b", role=UserRole.parent)
+    kid = await make_user(db, "bounty_kid_3b")
+    chore = await make_bounty_chore(db, parent.id, category.id, points=25, max_completions_per_day=3)
+
+    claim = BountyBoardClaim(
+        chore_id=chore.id,
+        user_id=kid.id,
+        status=BountyClaimStatus.completed,
+        completion_count=1,
+        claimed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(claim)
+    await db.commit()
+
+    with patch("backend.routers.bounty.ws_manager") as mock_ws:
+        mock_ws.broadcast = AsyncMock()
+        mock_ws.send_to_user = AsyncMock()
+        with patch("backend.routers.bounty._get_active_event_multiplier", return_value=1.0):
+            result = await verify_bounty_claim(claim_id=claim.id, db=db, parent=parent)
+
+    assert result.status == BountyClaimStatus.verified
+    assert result.completion_count == 2
 
 
 @pytest.mark.asyncio

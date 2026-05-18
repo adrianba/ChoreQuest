@@ -200,14 +200,14 @@ export default function SpinWheel({ availability, onSpinComplete }) {
         <p className="text-gold text-sm text-center max-w-xs">{reason}</p>
       )}
 
-      {/* After a spin: prompt if more credits remain */}
+      {/* After a spin: prompt if more spins remain */}
       {result !== null && canSpin && !spinning && (
         <p className="text-accent text-sm text-center font-medium">
           You have {spinCredits} spin{spinCredits === 1 ? '' : 's'} left — spin again!
         </p>
       )}
 
-      {/* Before spinning: show credit count when more than 1 available */}
+      {/* Before spinning: show spin count when more than 1 available */}
       {result === null && spinCredits > 1 && (
         <p className="text-muted text-xs text-center">
           {spinCredits} spins ready
