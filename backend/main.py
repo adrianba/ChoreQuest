@@ -86,14 +86,21 @@ async def daily_reset_task():
     Responsibilities:
     - Generate today's recurring chore assignments (with rotation advancement)
     - Clean up expired refresh tokens
+
+    IMPORTANT: next-run time is computed in **local** time (respecting the TZ
+    env var) so that DAILY_RESET_HOUR=0 always means local midnight regardless
+    of the host's UTC offset.  Using datetime.now(timezone.utc) here would
+    cause the reset to fire at UTC midnight — e.g. 7 pm CDT for a US Central
+    family — expiring quests and advancing rotations hours before the family's
+    day actually ends.
     """
     while True:
-        now = datetime.now(timezone.utc)
+        now_local = datetime.now()  # local time — honours TZ env var
         target_hour = settings.DAILY_RESET_HOUR
-        next_run = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
-        if now >= next_run:
+        next_run = now_local.replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        if now_local >= next_run:
             next_run += timedelta(days=1)
-        wait_seconds = (next_run - now).total_seconds()
+        wait_seconds = (next_run - now_local).total_seconds()
         await asyncio.sleep(wait_seconds)
 
         try:

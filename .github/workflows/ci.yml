@@ -31,7 +31,7 @@ jobs:
         run: sudo apt-get install -y shellcheck
 
       - name: Lint shell scripts
-        run: shellcheck deploy.sh watchdog.sh run-e2e.sh
+        run: shellcheck deploy.sh watchdog.sh run-e2e.sh scripts/audit-patterns.sh
 
       - name: Install docker-compose for smoke test
         run: sudo apt-get install -y docker-compose
@@ -45,6 +45,22 @@ jobs:
           docker-compose config > /dev/null
           echo "✅ docker-compose config OK — .env resolves correctly"
           rm .env
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1b — Code pattern audit (~5 s, no dependencies)
+# Greps for known dangerous antipatterns (UTC midnight as day boundary,
+# hardcoded timezone strings, etc.) that have caused bugs in this codebase.
+# Fails the PR if any ERROR-level pattern is found.
+# ─────────────────────────────────────────────────────────────────────────────
+  pattern-audit:
+    name: Code pattern audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run pattern audit
+        run: bash scripts/audit-patterns.sh
 
   backend-unit-tests:
     name: Backend unit tests

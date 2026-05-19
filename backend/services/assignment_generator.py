@@ -110,7 +110,12 @@ async def generate_daily_assignments(db: AsyncSession, today: date) -> None:
         logger.info("Skipping assignment generation — vacation day %s", today)
         return
 
-    now = datetime.now(timezone.utc)
+    # Two separate now values:
+    #   now_local — naive local time used by should_advance_rotation for .date() day-boundary checks
+    #   now_utc   — tz-aware UTC stored in rotation.last_rotated, consistent with all other writers
+    #               (rotations.py:57, chores.py:547,555 all use datetime.now(timezone.utc))
+    now_local = datetime.now()
+    now_utc = datetime.now(timezone.utc)
     chores = await _load_active_chores(db)
 
     for chore in chores:
@@ -137,8 +142,8 @@ async def generate_daily_assignments(db: AsyncSession, today: date) -> None:
             ]
 
             # Only advance rotation on days the chore actually runs
-            if rotation and active_rules and should_advance_rotation(rotation, now):
-                await advance_rotation_and_mirror(rotation, db, now)
+            if rotation and active_rules and should_advance_rotation(rotation, now_local):
+                await advance_rotation_and_mirror(rotation, db, now_utc)
 
             for rule in active_rules:
                 # Rotation filtering: only generate for the current rotation kid
@@ -169,8 +174,8 @@ async def generate_daily_assignments(db: AsyncSession, today: date) -> None:
 
             rotation = await _load_rotation(db, chore.id)
             if rotation:
-                if should_advance_rotation(rotation, now):
-                    await advance_rotation_and_mirror(rotation, db, now)
+                if should_advance_rotation(rotation, now_local):
+                    await advance_rotation_and_mirror(rotation, db, now_utc)
                 user_ids = [rotation.kid_ids[rotation.current_index]]
             else:
                 user_ids = await _get_legacy_user_ids(db, chore.id)

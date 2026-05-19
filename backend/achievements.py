@@ -1,7 +1,15 @@
+import os
 from datetime import datetime, date, timezone
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-_LOCAL_TZ = ZoneInfo('America/Chicago')
+# Resolve the container's local timezone from the TZ env var so that
+# "early bird" achievement checks (completion_before_time, all_daily_before_time)
+# use the family's actual local hour rather than a hardcoded zone.
+_tz_name = os.environ.get("TZ", "UTC")
+try:
+    _LOCAL_TZ = ZoneInfo(_tz_name)
+except ZoneInfoNotFoundError:
+    _LOCAL_TZ = ZoneInfo("UTC")
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models import (
