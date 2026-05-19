@@ -105,7 +105,7 @@ When triggered, `watchdog.sh` runs `deploy.sh` which does `git pull` + `docker c
 | `COOKIE_SECURE` | `false` | Set `true` behind HTTPS |
 | `CORS_ORIGINS` | *(empty)* | Comma-separated allowed origins |
 | `MAX_UPLOAD_SIZE_MB` | `5` | Photo proof upload size limit |
-| `DAILY_RESET_HOUR` | `0` | Hour (UTC) the daily quest reset runs |
+| `DAILY_RESET_HOUR` | `0` | Hour (local time, respects `TZ`) the daily quest reset runs |
 | `GITHUB_REPO` | `turbogizzmo/ChoreQuest` | Repo used for in-app update checks |
 | `VAPID_PUBLIC_KEY` | *(empty)* | VAPID public key for push notifications |
 | `VAPID_PRIVATE_KEY` | *(empty)* | VAPID private key for push notifications |
