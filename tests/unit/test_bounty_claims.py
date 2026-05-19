@@ -529,3 +529,86 @@ async def test_reject_bounty_returns_kid_display_name(db):
         result = await reject_bounty_claim(claim_id=claim.id, db=db, parent=parent)
 
     assert result.user_display_name == kid.display_name
+
+
+# ---------------------------------------------------------------------------
+# kid_id parameter — admin/parent acting on behalf of a kid
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_admin_can_claim_bounty_on_behalf_of_kid(db):
+    """Admin with kid_id can claim a bounty on behalf of a kid."""
+    category = await make_category(db)
+    admin = await make_user(db, "bounty_admin_1", role=UserRole.admin)
+    kid = await make_user(db, "bounty_kid_proxy_1")
+    chore = await make_bounty_chore(db, admin.id, category.id)
+    await db.commit()
+
+    with patch("backend.routers.bounty.ws_manager") as mock_ws:
+        mock_ws.broadcast = AsyncMock()
+        result = await claim_bounty(chore_id=chore.id, kid_id=kid.id, db=db, current_user=admin)
+
+    assert result.status == BountyClaimStatus.claimed
+    assert result.user_id == kid.id
+
+
+@pytest.mark.asyncio
+async def test_admin_can_complete_bounty_on_behalf_of_kid(db):
+    """Admin with kid_id can complete a bounty on behalf of a kid."""
+    category = await make_category(db)
+    admin = await make_user(db, "bounty_admin_2", role=UserRole.admin)
+    kid = await make_user(db, "bounty_kid_proxy_2")
+    chore = await make_bounty_chore(db, admin.id, category.id)
+
+    claim = BountyBoardClaim(
+        chore_id=chore.id,
+        user_id=kid.id,
+        status=BountyClaimStatus.claimed,
+        claimed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(claim)
+    await db.commit()
+
+    with patch("backend.routers.bounty.ws_manager") as mock_ws:
+        mock_ws.broadcast = AsyncMock()
+        result = await complete_bounty(
+            chore_id=chore.id, kid_id=kid.id, file=None, kid_note=None, db=db, current_user=admin,
+        )
+
+    assert result.status == BountyClaimStatus.completed
+    assert result.user_id == kid.id
+
+
+@pytest.mark.asyncio
+async def test_admin_with_invalid_kid_id_returns_400(db):
+    """Admin with non-existent kid_id gets 400."""
+    from fastapi import HTTPException
+
+    category = await make_category(db)
+    admin = await make_user(db, "bounty_admin_3", role=UserRole.admin)
+    chore = await make_bounty_chore(db, admin.id, category.id)
+    await db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        with patch("backend.routers.bounty.ws_manager") as mock_ws:
+            mock_ws.broadcast = AsyncMock()
+            await claim_bounty(chore_id=chore.id, kid_id=99999, db=db, current_user=admin)
+    assert exc_info.value.status_code == 400
+    assert "Invalid kid_id" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_admin_without_kid_id_gets_403(db):
+    """Admin without kid_id gets 403 (existing behavior)."""
+    from fastapi import HTTPException
+
+    category = await make_category(db)
+    admin = await make_user(db, "bounty_admin_4", role=UserRole.admin)
+    chore = await make_bounty_chore(db, admin.id, category.id)
+    await db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        with patch("backend.routers.bounty.ws_manager") as mock_ws:
+            mock_ws.broadcast = AsyncMock()
+            await claim_bounty(chore_id=chore.id, kid_id=None, db=db, current_user=admin)
+    assert exc_info.value.status_code == 403

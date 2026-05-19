@@ -8,7 +8,7 @@ chore_assignments.
 
 from datetime import datetime, date, timezone, timedelta
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, File
 from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -184,11 +184,23 @@ async def list_bounties(
 @router.post("/{chore_id}/claim", response_model=BountyClaimResponse, status_code=201)
 async def claim_bounty(
     chore_id: int,
+    kid_id: int | None = Query(None, description="Claim on behalf of this kid (admin/parent only)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Kid accepts a bounty from the board."""
-    if current_user.role not in (UserRole.kid,):
+    # Determine target user: parents/admins may act on behalf of a kid
+    target_user = current_user
+    if kid_id is not None and current_user.role in (UserRole.parent, UserRole.admin):
+        kid_result = await db.execute(
+            select(User).where(User.id == kid_id, User.role == UserRole.kid, User.is_active == True)
+        )
+        kid = kid_result.scalar_one_or_none()
+        if kid is None:
+            raise HTTPException(status_code=400, detail="Invalid kid_id")
+        target_user = kid
+
+    if target_user.role not in (UserRole.kid,):
         raise HTTPException(status_code=403, detail="Only kids can claim bounties")
 
     # Verify the chore exists and is a bounty
@@ -205,7 +217,7 @@ async def claim_bounty(
     existing_assignment = await db.execute(
         select(ChoreAssignment).where(
             ChoreAssignment.chore_id == chore_id,
-            ChoreAssignment.user_id == current_user.id,
+            ChoreAssignment.user_id == target_user.id,
             ChoreAssignment.date == today,
             ChoreAssignment.status != AssignmentStatus.skipped,
         )
@@ -220,7 +232,7 @@ async def claim_bounty(
     existing_claim_result = await db.execute(
         select(BountyBoardClaim).where(
             BountyBoardClaim.chore_id == chore_id,
-            BountyBoardClaim.user_id == current_user.id,
+            BountyBoardClaim.user_id == target_user.id,
         )
     )
     existing_claim = existing_claim_result.scalar_one_or_none()
@@ -247,7 +259,7 @@ async def claim_bounty(
             await db.commit()
             await db.refresh(existing_claim)
             await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-            return _build_claim(existing_claim, current_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
+            return _build_claim(existing_claim, target_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
         if existing_claim.status == BountyClaimStatus.verified:
             # Allow same-day re-claims for multi-completion bounties.
             existing_claim.status = BountyClaimStatus.claimed
@@ -260,12 +272,12 @@ async def claim_bounty(
             await db.commit()
             await db.refresh(existing_claim)
             await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-            return _build_claim(existing_claim, current_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
+            return _build_claim(existing_claim, target_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
         raise HTTPException(status_code=409, detail="You have already claimed this bounty")
 
     claim = BountyBoardClaim(
         chore_id=chore_id,
-        user_id=current_user.id,
+        user_id=target_user.id,
         status=BountyClaimStatus.claimed,
         claimed_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
@@ -280,7 +292,7 @@ async def claim_bounty(
             user_id=parent.id,
             type=NotificationType.bounty_claimed,
             title="Bounty Accepted!",
-            message=f"{current_user.display_name} accepted the bounty: {chore.title}",
+            message=f"{target_user.display_name} accepted the bounty: {chore.title}",
             reference_type="bounty_claim",
             reference_id=None,
         ))
@@ -288,7 +300,7 @@ async def claim_bounty(
     await db.commit()
     await db.refresh(claim)
     await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-    return _build_claim(claim, current_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
+    return _build_claim(claim, target_user, chore_title=chore.title, chore_points=chore.points, chore_requires_photo=chore.requires_photo)
 
 
 # ---------------------------------------------------------------------------
@@ -298,19 +310,30 @@ async def claim_bounty(
 @router.post("/{chore_id}/complete", response_model=BountyClaimResponse)
 async def complete_bounty(
     chore_id: int,
+    kid_id: int | None = Query(None, description="Complete on behalf of this kid (admin/parent only)"),
     file: UploadFile | None = File(None),
     kid_note: str | None = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Kid marks their claimed bounty as done (optionally with photo proof and a note)."""
-    if current_user.role != UserRole.kid:
+    target_user = current_user
+    if kid_id is not None and current_user.role in (UserRole.parent, UserRole.admin):
+        kid_result = await db.execute(
+            select(User).where(User.id == kid_id, User.role == UserRole.kid, User.is_active == True)
+        )
+        kid = kid_result.scalar_one_or_none()
+        if kid is None:
+            raise HTTPException(status_code=400, detail="Invalid kid_id")
+        target_user = kid
+
+    if target_user.role != UserRole.kid:
         raise HTTPException(status_code=403, detail="Only kids can complete bounties")
 
     claim_result = await db.execute(
         select(BountyBoardClaim).where(
             BountyBoardClaim.chore_id == chore_id,
-            BountyBoardClaim.user_id == current_user.id,
+            BountyBoardClaim.user_id == target_user.id,
             BountyBoardClaim.status == BountyClaimStatus.claimed,
         )
     )
@@ -358,7 +381,7 @@ async def complete_bounty(
             user_id=parent.id,
             type=NotificationType.bounty_submitted,
             title="Bounty Ready to Verify!",
-            message=f"{current_user.display_name} completed the bounty: {chore_title}",
+            message=f"{target_user.display_name} completed the bounty: {chore_title}",
             reference_type="bounty_claim",
             reference_id=claim.id,
         ))
@@ -366,7 +389,7 @@ async def complete_bounty(
     await db.commit()
     await db.refresh(claim)
     await ws_manager.broadcast(_WS_BOUNTY_CHANGED)
-    return _build_claim(claim, current_user, chore_title=chore.title if chore else None, chore_points=chore.points if chore else None, chore_requires_photo=chore.requires_photo if chore else False)
+    return _build_claim(claim, target_user, chore_title=chore.title if chore else None, chore_points=chore.points if chore else None, chore_requires_photo=chore.requires_photo if chore else False)
 
 
 # ---------------------------------------------------------------------------
@@ -376,17 +399,28 @@ async def complete_bounty(
 @router.delete("/{chore_id}/claim", status_code=200)
 async def abandon_bounty(
     chore_id: int,
+    kid_id: int | None = Query(None, description="Abandon on behalf of this kid (admin/parent only)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Kid abandons their bounty claim."""
-    if current_user.role != UserRole.kid:
+    target_user = current_user
+    if kid_id is not None and current_user.role in (UserRole.parent, UserRole.admin):
+        kid_result = await db.execute(
+            select(User).where(User.id == kid_id, User.role == UserRole.kid, User.is_active == True)
+        )
+        kid = kid_result.scalar_one_or_none()
+        if kid is None:
+            raise HTTPException(status_code=400, detail="Invalid kid_id")
+        target_user = kid
+
+    if target_user.role != UserRole.kid:
         raise HTTPException(status_code=403, detail="Only kids can abandon bounties")
 
     claim_result = await db.execute(
         select(BountyBoardClaim).where(
             BountyBoardClaim.chore_id == chore_id,
-            BountyBoardClaim.user_id == current_user.id,
+            BountyBoardClaim.user_id == target_user.id,
             BountyBoardClaim.status.in_([BountyClaimStatus.claimed, BountyClaimStatus.completed]),
         )
     )
