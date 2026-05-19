@@ -541,10 +541,17 @@ async def assign_chore(
         kid_ids = [a.user_id for a in body.assignments]
         inverse_chore_id = getattr(body.rotation, "inverse_of_chore_id", None)
         if existing_rotation:
+            # Only reset the rotation clock when the kid list actually changes.
+            # Re-saving without changing kids (e.g. editing cadence or photo
+            # settings) should not clobber current_index or last_rotated —
+            # doing so would cause the daily reset to skip the next natural
+            # advance, giving the wrong kid an extra cycle.
+            kids_changed = [int(k) for k in (existing_rotation.kid_ids or [])] != [int(k) for k in kid_ids]
             existing_rotation.kid_ids = kid_ids
             existing_rotation.cadence = body.rotation.cadence
-            existing_rotation.current_index = 0
-            existing_rotation.last_rotated = datetime.now(timezone.utc)
+            if kids_changed:
+                existing_rotation.current_index = 0
+                existing_rotation.last_rotated = datetime.now(timezone.utc)
             existing_rotation.inverse_of_chore_id = inverse_chore_id
         else:
             existing_rotation = ChoreRotation(
