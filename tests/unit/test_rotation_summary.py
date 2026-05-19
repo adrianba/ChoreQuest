@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 from tests.unit.conftest import (
     make_category, make_chore, make_user, make_rotation,
 )
-from backend.models import RotationCadence
+from backend.models import AssignmentStatus, ChoreAssignment, RotationCadence
 from backend.routers._chores_helpers import build_rotation_summaries
 from backend.services.rotation import get_rotation_kid_for_day
 
@@ -159,3 +159,102 @@ async def test_summary_daily_cadence_advance_pending(db):
     summaries = await build_rotation_summaries(db, [chore.id])
     assert chore.id in summaries
     assert summaries[chore.id].current_kid_id == projected_kid_id
+
+
+@pytest.mark.asyncio
+async def test_summary_uses_todays_assignment_after_utc_reset(db):
+    """
+    Regression: after the UTC-midnight reset fires before local midnight,
+    current_index already points to tomorrow's kid while today's assignment
+    still belongs to the previous kid.
+
+    Scenario (e.g. 8 pm CDT = UTC midnight)
+    ----------------------------------------
+    Daily rotation [Kid1, Kid2].
+    UTC reset has already fired: current_index=1 → Kid2, last_rotated=today.
+    But today's ChoreAssignment (date=today) was created for Kid1 — it is
+    still pending and visible on the quest board.
+
+    build_rotation_summaries() must return Kid1, not Kid2.
+    """
+    from backend.models import UserRole
+    cat = await make_category(db)
+    parent = await make_user(db, "parent_tz", role=UserRole.parent)
+    kid1 = await make_user(db, "kid_tz_1")
+    kid2 = await make_user(db, "kid_tz_2")
+    chore = await make_chore(db, parent.id, cat.id)
+
+    today = date.today()
+    # Simulate: UTC reset already ran and advanced index to 1 (Kid2)
+    last_rotated = datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc)
+    await make_rotation(
+        db,
+        chore.id,
+        kid_ids=[kid1.id, kid2.id],
+        cadence=RotationCadence.daily,
+        current_index=1,           # post-reset: points to Kid2 (tomorrow)
+        last_rotated=last_rotated,
+    )
+
+    # Today's assignment was created for Kid1 (before the reset or by the
+    # previous reset cycle) and is still pending on the quest board.
+    assignment = ChoreAssignment(
+        chore_id=chore.id,
+        user_id=kid1.id,
+        date=today,
+        status=AssignmentStatus.pending,
+    )
+    db.add(assignment)
+    await db.flush()
+
+    summaries = await build_rotation_summaries(db, [chore.id])
+    assert chore.id in summaries
+    assert summaries[chore.id].current_kid_id == kid1.id, (
+        "Should show Kid1 (today's actual assignment) not Kid2 "
+        "(post-UTC-reset current_index pointing to tomorrow)"
+    )
+    assert summaries[chore.id].current_index == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_prefers_pending_over_stale_verified_when_both_exist(db):
+    """
+    Dict-collision guard: if a chore/date has both a stale verified row
+    (from a previous rotation cycle that happened to fall on the same date)
+    and a current pending row, the pending kid should win.
+    """
+    from backend.models import UserRole
+    cat = await make_category(db)
+    parent = await make_user(db, "parent_col", role=UserRole.parent)
+    kid1 = await make_user(db, "kid_col_1")
+    kid2 = await make_user(db, "kid_col_2")
+    chore = await make_chore(db, parent.id, cat.id)
+
+    today = date.today()
+    last_rotated = datetime.combine(today, datetime.min.time()).replace(tzinfo=timezone.utc)
+    await make_rotation(
+        db,
+        chore.id,
+        kid_ids=[kid1.id, kid2.id],
+        cadence=RotationCadence.daily,
+        current_index=0,
+        last_rotated=last_rotated,
+    )
+
+    # Stale verified assignment (from a previous rotation pass, same date)
+    db.add(ChoreAssignment(
+        chore_id=chore.id, user_id=kid2.id,
+        date=today, status=AssignmentStatus.verified,
+    ))
+    # Current pending assignment — this is the real one for today
+    db.add(ChoreAssignment(
+        chore_id=chore.id, user_id=kid1.id,
+        date=today, status=AssignmentStatus.pending,
+    ))
+    await db.flush()
+
+    summaries = await build_rotation_summaries(db, [chore.id])
+    assert chore.id in summaries
+    assert summaries[chore.id].current_kid_id == kid1.id, (
+        "Pending assignment should win over stale verified row for same date"
+    )

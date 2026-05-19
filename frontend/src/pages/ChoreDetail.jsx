@@ -676,7 +676,11 @@ export default function ChoreDetail() {
                 Rotation active — currently{' '}
                 <span className="font-semibold text-purple">
                   {(() => {
-                    const currentKidId = rotation.kid_ids?.[rotation.current_index];
+                    // Prefer rotation_summary (grounded in today's actual
+                    // assignment) over raw current_index from /api/rotations,
+                    // which advances to tomorrow's kid before local midnight.
+                    const currentKidId = chore.rotation_summary?.current_kid_id
+                      ?? rotation.kid_ids?.[rotation.current_index];
                     const currentKid = allKids.find((k) => k.id === currentKidId);
                     return currentKid?.display_name || `Kid #${currentKidId}`;
                   })()}
@@ -767,7 +771,12 @@ export default function ChoreDetail() {
               <div className="flex flex-wrap gap-2">
                 {(rotation.kid_ids || []).map((kidId, idx) => {
                   const kid = allKids.find((k) => k.id === kidId);
-                  const isCurrent = idx === rotation.current_index;
+                  // Prefer rotation_summary.current_kid_id (grounded in today's
+                  // actual assignment) over raw current_index, which advances
+                  // to tomorrow's kid before local midnight after the UTC reset.
+                  const isCurrent = chore.rotation_summary
+                    ? kidId === chore.rotation_summary.current_kid_id
+                    : idx === rotation.current_index;
                   return (
                     <span
                       key={kidId}
