@@ -124,10 +124,20 @@ async def _get_active_event_multiplier(db: AsyncSession) -> float:
 
 @router.get("", response_model=list[BountyResponse])
 async def list_bounties(
+    kid_id: int | None = Query(None, description="Show claims for this kid (admin/parent only)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """List all active bounty-board chores with claim status."""
+    # Determine whose claims to highlight
+    target_user_id = current_user.id
+    if kid_id is not None and current_user.role in (UserRole.parent, UserRole.admin):
+        kid_result = await db.execute(
+            select(User).where(User.id == kid_id, User.role == UserRole.kid, User.is_active == True)
+        )
+        if kid_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=400, detail="Invalid kid_id")
+        target_user_id = kid_id
     result = await db.execute(
         select(Chore)
         .where(Chore.is_bounty == True, Chore.is_active == True)
@@ -153,7 +163,7 @@ async def list_bounties(
     my_claim_by_chore: dict[int, BountyBoardClaim] = {}
     for claim, user in claim_rows:
         claims_by_chore[claim.chore_id].append((claim, user))
-        if claim.user_id == current_user.id:
+        if claim.user_id == target_user_id:
             my_claim_by_chore[claim.chore_id] = claim
 
     # Load categories

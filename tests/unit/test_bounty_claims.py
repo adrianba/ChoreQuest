@@ -19,7 +19,7 @@ from backend.models import (
     PointTransaction, Notification, Recurrence, UserRole,
 )
 from backend.routers.bounty import (
-    claim_bounty, complete_bounty, verify_bounty_claim, reject_bounty_claim,
+    claim_bounty, complete_bounty, list_bounties, verify_bounty_claim, reject_bounty_claim,
 )
 from tests.unit.conftest import make_category, make_user
 
@@ -646,3 +646,54 @@ async def test_get_chore_returns_bounty_claims_for_parent(db):
     assert result.bounty_claims[0]["id"] == claim.id
     assert result.bounty_claims[0]["user_id"] == kid.id
     assert result.bounty_claims[0]["status"] == "claimed"
+
+
+# ---------------------------------------------------------------------------
+# list_bounties kid_id parameter
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_list_bounties_admin_with_kid_id_sees_kid_claim(db):
+    """Admin with kid_id should see the kid's claim as my_claim."""
+    category = await make_category(db)
+    admin = await make_user(db, "bounty_admin_lb", role=UserRole.admin)
+    kid = await make_user(db, "bounty_kid_lb")
+    chore = await make_bounty_chore(db, admin.id, category.id)
+
+    claim = BountyBoardClaim(
+        chore_id=chore.id,
+        user_id=kid.id,
+        status=BountyClaimStatus.claimed,
+        claimed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(claim)
+    await db.commit()
+
+    bounties = await list_bounties(kid_id=kid.id, db=db, current_user=admin)
+
+    assert len(bounties) == 1
+    assert bounties[0].my_claim is not None
+    assert bounties[0].my_claim.user_id == kid.id
+
+
+@pytest.mark.asyncio
+async def test_list_bounties_admin_without_kid_id_no_claim(db):
+    """Admin without kid_id should not see the kid's claim as my_claim."""
+    category = await make_category(db)
+    admin = await make_user(db, "bounty_admin_lb2", role=UserRole.admin)
+    kid = await make_user(db, "bounty_kid_lb2")
+    chore = await make_bounty_chore(db, admin.id, category.id)
+
+    claim = BountyBoardClaim(
+        chore_id=chore.id,
+        user_id=kid.id,
+        status=BountyClaimStatus.claimed,
+        claimed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(claim)
+    await db.commit()
+
+    bounties = await list_bounties(kid_id=None, db=db, current_user=admin)
+
+    assert len(bounties) == 1
+    assert bounties[0].my_claim is None
