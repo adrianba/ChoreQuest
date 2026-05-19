@@ -7,7 +7,7 @@ These are internal utilities used across the chores router endpoints:
 - _build_rotation_summaries
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 
 from fastapi import HTTPException
 from sqlalchemy import case, select
@@ -110,7 +110,7 @@ async def build_rotation_summaries(
     kid_names: dict[int, str] = {row.id: row.display_name for row in kid_result.all()}
 
     today = date.today()
-    now = datetime.now(timezone.utc)
+    now = datetime.now()  # local time — only used for should_advance_rotation .date() check
 
     # Batch-load today's actual assignments for all rotation chores so we can
     # ground the "currently X's turn" display in what was really scheduled for
