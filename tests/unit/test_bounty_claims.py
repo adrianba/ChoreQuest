@@ -612,3 +612,37 @@ async def test_admin_without_kid_id_gets_403(db):
             mock_ws.broadcast = AsyncMock()
             await claim_bounty(chore_id=chore.id, kid_id=None, db=db, current_user=admin)
     assert exc_info.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# get_chore returns bounty_claims for parent viewing a bounty
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_chore_returns_bounty_claims_for_parent(db):
+    """get_chore should include bounty_claims when a parent views a bounty chore
+    with an active claim — this data is needed by ChoreDetail to route verify
+    to the bounty endpoint instead of the chore endpoint."""
+    from backend.routers.chores import get_chore
+
+    category = await make_category(db)
+    parent = await make_user(db, "bounty_parent_gc", role=UserRole.parent)
+    kid = await make_user(db, "bounty_kid_gc")
+    chore = await make_bounty_chore(db, parent.id, category.id)
+
+    claim = BountyBoardClaim(
+        chore_id=chore.id,
+        user_id=kid.id,
+        status=BountyClaimStatus.claimed,
+        claimed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(claim)
+    await db.commit()
+
+    result = await get_chore(chore_id=chore.id, db=db, user=parent)
+
+    assert result.bounty_claims is not None
+    assert len(result.bounty_claims) == 1
+    assert result.bounty_claims[0]["id"] == claim.id
+    assert result.bounty_claims[0]["user_id"] == kid.id
+    assert result.bounty_claims[0]["status"] == "claimed"
