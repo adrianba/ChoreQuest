@@ -383,6 +383,32 @@ async def get_chore(
             }
             for a in kid_assignments
         ]
+    # For bounty chores, include active bounty claims so the parent can
+    # verify directly from ChoreDetail (which otherwise only knows about
+    # ChoreAssignment records).
+    if chore.is_bounty and user.role in (UserRole.parent, UserRole.admin):
+        from backend.models import BountyBoardClaim, BountyClaimStatus
+        claim_result = await db.execute(
+            select(BountyBoardClaim, User)
+            .join(User, BountyBoardClaim.user_id == User.id)
+            .where(
+                BountyBoardClaim.chore_id == chore_id,
+                BountyBoardClaim.status.in_([BountyClaimStatus.claimed, BountyClaimStatus.completed]),
+            )
+            .order_by(BountyBoardClaim.claimed_at.desc())
+        )
+        updates["bounty_claims"] = [
+            {
+                "id": claim.id,
+                "user_id": claim.user_id,
+                "user_display_name": kid.display_name,
+                "status": claim.status.value,
+                "claimed_at": utc_iso(claim.claimed_at),
+                "completed_at": utc_iso(claim.completed_at),
+            }
+            for claim, kid in claim_result.all()
+        ]
+
     return response.model_copy(update=updates)
 
 

@@ -204,10 +204,16 @@ export default function ChoreDetail() {
   const handleVerify = async (assignmentId) => {
     setActionLoading('verify');
     try {
-      const path = assignmentId
-        ? `/api/chores/assignments/${assignmentId}/verify`
-        : `/api/chores/${id}/verify`;
-      await api(path, { method: 'POST' });
+      // Bounties use a separate verify endpoint keyed by claim ID
+      if (chore?.is_bounty && chore?.bounty_claims?.length > 0) {
+        const claimId = chore.bounty_claims[0].id;
+        await api(`/api/bounty/claims/${claimId}/verify`, { method: 'POST' });
+      } else {
+        const path = assignmentId
+          ? `/api/chores/assignments/${assignmentId}/verify`
+          : `/api/chores/${id}/verify`;
+        await api(path, { method: 'POST' });
+      }
       showToast('Quest verified! The hero has been rewarded.', 'success');
       await fetchChore();
     } catch (err) {

@@ -438,8 +438,12 @@ async def verify_bounty_claim(
     db: AsyncSession = Depends(get_db),
     parent: User = Depends(require_parent),
 ):
-    """Parent approves a completed bounty claim — awards XP to the kid."""
-    # Atomically transition the claim from completed → verified.
+    """Parent approves a bounty claim — awards XP to the kid.
+
+    Works for both 'completed' claims (kid marked done) and 'claimed' claims
+    (parent verifies directly while the bounty is still in progress).
+    """
+    # Atomically transition the claim from claimed/completed → verified.
     # Using a conditional UPDATE means only one concurrent request can succeed;
     # the second will see rowcount=0 and receive a 409 rather than double-awarding XP.
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -447,7 +451,7 @@ async def verify_bounty_claim(
         update(BountyBoardClaim)
         .where(
             BountyBoardClaim.id == claim_id,
-            BountyBoardClaim.status == BountyClaimStatus.completed,
+            BountyBoardClaim.status.in_([BountyClaimStatus.claimed, BountyClaimStatus.completed]),
         )
         .values(
             status=BountyClaimStatus.verified,

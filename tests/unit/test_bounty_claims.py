@@ -423,6 +423,34 @@ async def test_verify_bounty_splits_event_bonus_transaction(db):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
+async def test_verify_in_progress_bounty_awards_xp(db):
+    """Parent can verify a bounty that is still 'claimed' (in progress)."""
+    category = await make_category(db)
+    parent = await make_user(db, "bounty_parent_ip", role=UserRole.parent)
+    kid = await make_user(db, "bounty_kid_ip")
+    chore = await make_bounty_chore(db, parent.id, category.id, points=15)
+
+    claim = BountyBoardClaim(
+        chore_id=chore.id,
+        user_id=kid.id,
+        status=BountyClaimStatus.claimed,
+        claimed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(claim)
+    await db.commit()
+
+    with patch("backend.routers.bounty.ws_manager") as mock_ws:
+        mock_ws.broadcast = AsyncMock()
+        mock_ws.send_to_user = AsyncMock()
+        with patch("backend.routers.bounty._get_active_event_multiplier", return_value=1.0):
+            result = await verify_bounty_claim(claim_id=claim.id, db=db, parent=parent)
+
+    assert result.status == BountyClaimStatus.verified
+    assert kid.points_balance == 15
+    assert kid.total_points_earned == 15
+
+
+@pytest.mark.asyncio
 async def test_reject_bounty_resets_status_to_claimed(db):
     category = await make_category(db)
     parent = await make_user(db, "bounty_parent_6", role=UserRole.parent)
