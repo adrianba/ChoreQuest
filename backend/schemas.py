@@ -153,6 +153,9 @@ class ChoreResponse(BaseModel):
     # Named kid_assignments (not assignments) to avoid shadowing the SQLAlchemy
     # relationship of the same name on the Chore ORM model.
     kid_assignments: list[dict] | None = None
+    # Populated by GET /api/chores/{id} for bounty chores when the requester is
+    # a parent/admin, so ChoreDetail can route verify to the bounty endpoint.
+    bounty_claims: list[dict] | None = None
 
     model_config = {"from_attributes": True}
 
