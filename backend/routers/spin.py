@@ -27,9 +27,10 @@ router = APIRouter(prefix="/api/spin", tags=["spin"])
 SPIN_MIN = 1
 SPIN_MAX = 25
 
-# Must mirror SEGMENTS in frontend SpinWheel.jsx — backend picks from
-# these values so the wheel animation always matches the awarded points.
+# Must mirror SEGMENTS / SEGMENTS_HIGH in frontend SpinWheel.jsx — backend
+# picks from these values so the wheel animation always matches the awarded points.
 WHEEL_VALUES = [1, 5, 2, 10, 3, 15, 1, 25, 2, 5, 3, 10]
+WHEEL_VALUES_HIGH = [3, 8, 5, 12, 7, 15, 5, 25, 10, 8, 3, 15]
 
 
 async def _can_spin_today(
@@ -184,11 +185,17 @@ async def check_availability(
 ):
     """Check if the user can spin today."""
     can_spin, last_result, reason, spin_credits, _ = await _can_spin_today(db, user)
+    # Read high-scoring setting
+    hs_row = await db.execute(
+        select(AppSetting.value).where(AppSetting.key == "spin_high_scoring")
+    )
+    high_scoring = (hs_row.scalar_one_or_none() or "false").lower() == "true"
     return SpinAvailabilityResponse(
         can_spin=can_spin,
         last_result=last_result,
         reason=reason,
         spin_credits=spin_credits,
+        high_scoring=high_scoring,
     )
 
 
@@ -211,8 +218,15 @@ async def execute_spin(
             detail="Unable to process spin right now. Please try again.",
         )
 
+    # Read high-scoring setting
+    hs_row = await db.execute(
+        select(AppSetting.value).where(AppSetting.key == "spin_high_scoring")
+    )
+    high_scoring = (hs_row.scalar_one_or_none() or "false").lower() == "true"
+    values = WHEEL_VALUES_HIGH if high_scoring else WHEEL_VALUES
+
     # Pick from the wheel segments so the frontend animation matches
-    points_won = random.choice(WHEEL_VALUES)
+    points_won = random.choice(values)
     # Create spin result
     spin_result = SpinResult(
         user_id=user.id,

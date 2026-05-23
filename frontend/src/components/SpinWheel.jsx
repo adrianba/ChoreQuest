@@ -18,7 +18,20 @@ const SEGMENTS = [
   { value: 10, color: '#ef4444' },
 ];
 
-const SEGMENT_ANGLE = 360 / SEGMENTS.length;
+const SEGMENTS_HIGH = [
+  { value: 3, color: '#ef4444' },
+  { value: 8, color: '#f59e0b' },
+  { value: 5, color: '#10b981' },
+  { value: 12, color: '#a855f7' },
+  { value: 7, color: '#14b8a6' },
+  { value: 15, color: '#f97316' },
+  { value: 5, color: '#ec4899' },
+  { value: 25, color: '#f59e0b' },
+  { value: 10, color: '#06b6d4' },
+  { value: 8, color: '#10b981' },
+  { value: 3, color: '#a855f7' },
+  { value: 15, color: '#ef4444' },
+];
 
 function normalizeDegrees(value) {
   return ((value % 360) + 360) % 360;
@@ -55,7 +68,11 @@ export default function SpinWheel({ availability, onSpinComplete }) {
   const canSpin = availability?.can_spin ?? false;
   const reason = availability?.reason ?? null;
   const spinCredits = availability?.spin_credits ?? 0;
+  const highScoring = availability?.high_scoring ?? false;
   const disabled = !canSpin;
+
+  const activeSegments = highScoring ? SEGMENTS_HIGH : SEGMENTS;
+  const SEGMENT_ANGLE = 360 / activeSegments.length;
 
   const handleSpin = useCallback(async () => {
     if (spinning || disabled) return;
@@ -71,13 +88,13 @@ export default function SpinWheel({ availability, onSpinComplete }) {
       const wonPoints = data.points_won;
 
       // Find all segment indices that match and pick one randomly
-      const matching = SEGMENTS.reduce((acc, s, i) => {
+      const matching = activeSegments.reduce((acc, s, i) => {
         if (s.value === wonPoints) acc.push(i);
         return acc;
       }, []);
       const targetIdx = matching.length > 0
         ? matching[Math.floor(Math.random() * matching.length)]
-        : Math.floor(Math.random() * SEGMENTS.length);
+        : Math.floor(Math.random() * activeSegments.length);
 
       // Calculate target rotation
       const segmentCenter = targetIdx * SEGMENT_ANGLE + SEGMENT_ANGLE / 2;
@@ -100,7 +117,7 @@ export default function SpinWheel({ availability, onSpinComplete }) {
       setError(err.message || 'Spin failed!');
       setSpinning(false);
     }
-  }, [spinning, disabled, rotation, onSpinComplete]);
+  }, [spinning, disabled, rotation, onSpinComplete, activeSegments]);
 
   const cx = 150;
   const cy = 150;
@@ -146,7 +163,7 @@ export default function SpinWheel({ availability, onSpinComplete }) {
             />
 
             {/* Segments */}
-            {SEGMENTS.map((seg, i) => {
+            {activeSegments.map((seg, i) => {
               const startAngle = i * SEGMENT_ANGLE;
               const endAngle = startAngle + SEGMENT_ANGLE;
               const labelAngle = startAngle + SEGMENT_ANGLE / 2;

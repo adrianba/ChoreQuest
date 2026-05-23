@@ -437,13 +437,22 @@ export default function Settings() {
                 label="Spin Wheel"
               />
               {(settings.spin_wheel_enabled ?? true) && (
-                <ToggleSwitch
-                  enabled={settings.spin_requires_verification ?? true}
-                  onChange={(v) => updateSetting('spin_requires_verification', v)}
-                  label="Spin requires parent verification"
-                  description="When on, kids must have all quests verified by a parent before spinning. Prevents submitting fake completions just to unlock the wheel."
-                  indent
-                />
+                <>
+                  <ToggleSwitch
+                    enabled={settings.spin_requires_verification ?? true}
+                    onChange={(v) => updateSetting('spin_requires_verification', v)}
+                    label="Spin requires parent verification"
+                    description="When on, kids must have all quests verified by a parent before spinning. Prevents submitting fake completions just to unlock the wheel."
+                    indent
+                  />
+                  <ToggleSwitch
+                    enabled={settings.spin_high_scoring ?? false}
+                    onChange={(v) => updateSetting('spin_high_scoring', v)}
+                    label="Enable bonus spin rewards"
+                    description="Higher scoring spin wheel — minimum 3 XP, most values 5–15. Great for rewarding a full day of completed chores."
+                    indent
+                  />
+                </>
               )}
               <ToggleSwitch
                 enabled={settings.chore_trading_enabled ?? true}
